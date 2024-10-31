@@ -205,8 +205,8 @@ using muList_t = std::pair< vector<muon_t>, vector<uint> >;
 
 ```cpp
 bool MultiLepPAT::isOverlapPair(
-    const muList_t& arg_MuonPair1, 
-    const muList_t& arg_MuonPair2 
+    const muList_t& arg_MuonPair1,
+    const muList_t& arg_MuonPair2
     )
 ```
 ###### 参数
@@ -232,7 +232,7 @@ bool MultiLepPAT::particlesToVtx(
 )
 bool MultiLepPAT::particlesToVtx(
     const vector<RefCountedKinematicParticle>& arg_FromParticles,
-    const string&                              arg_Message    
+    const string&                              arg_Message
 )
 bool MultiLepPAT::particlesToVtx(
     RefCountedKinematicTree&                   arg_VertexFitTree,
@@ -296,7 +296,7 @@ bool MultiLepPAT::extractFitRes(
 
 ```cpp
 void MultiLepPAT::getDynamics(
-    double  arg_mass, 
+    double  arg_mass,
     double  arg_px,  double  arg_py,  double  arg_pz,
     double& res_pt,  double& res_eta, double& res_phi
 )
@@ -358,16 +358,16 @@ iTrackc != theTrackHandle->end(); ++iTrackc)
 if (thePATMuonHandle->size() >= 4)
 {
 	// fill muon track block
-	for (edm::View<pat::Muon>::const_iterator iMuonP = thePATMuonHandle->begin(); //  MINIAOD
-		 iMuonP != thePATMuonHandle->end(); ++iMuonP)
+	for (auto iMuonP  = thePATMuonHandle->begin(); //  MINIAOD
+		      iMuonP != thePATMuonHandle->end(); ++iMuonP)
 	{
 		/*********************************************************
          * Some muon info processing here. We skip this part.
         *********************************************************/
 
 		// Find and delete muon Tracks in PionTracks
-		for (std::vector<edm::View<pat::PackedCandidate>::const_iterator>::const_iterator iTrackfID =  nonMuonPionTrack.begin(); // MINIAOD
-		iTrackfID !=  nonMuonPionTrack.end(); ++iTrackfID)
+		for (auto iTrackfID  =  nonMuonPionTrack.begin(); // MINIAOD
+		           iTrackfID != nonMuonPionTrack.end(); ++iTrackfID)
 		{
 			if(iMuonP->track().isNull())
 			{
@@ -381,7 +381,9 @@ if (thePATMuonHandle->size() >= 4)
              * 注意到CMS通过径迹可以直接给出动量，不需要静止质量或其他参量。
             ******************************************************************/
 
-			if (iTrackf->px() == iMuonP->track()->px() && iTrackf->py() == iMuonP->track()->py() && iTrackf->pz() == iMuonP->track()->pz())
+			if (   iTrackf->px() == iMuonP->track()->px()
+                && iTrackf->py() == iMuonP->track()->py()
+                && iTrackf->pz() == iMuonP->track()->pz())
 			{
 				nonMuonPionTrack.erase(iTrackfID);
 				iTrackfID = iTrackfID - 1;
