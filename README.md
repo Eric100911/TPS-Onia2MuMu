@@ -58,157 +58,33 @@ $pp \rightarrow J/\psi + \Upsilon + \phi \rightarrow 4\mu + 2K$
 
 （待完善，或另起repository进行）
 
-## 代码实现说明
+## 短期工作
 
-### 通过`using`声明给出的变量别名
+### $J/\psi + J/\psi + \Upsilon$ 相关分析
 
-#### 1. `muon_t`
+- 2024.11.5 （主负责：王驰）
+    - 检查Run2023C-v2系列数据处理结果
+    - 应用`CutOptimization`工具对Run2023系列数据筛选进行优化，尝试提高显著度
 
-存储单个$\mu^{\pm}$信息，为`RefCountedKinematicParticle`类型别名。
+### $J/\psi + J/\psi + \phi$ 相关分析
 
-```cpp
-using muon_t  = RefCountedKinematicParticle;
-```
+- 2024.11.5 （主负责：程幸）
+    - 修改代码，使得可以从数据中提取$J/\psi + J/\psi + \phi$过程候选
 
-#### 2. `muList_t`
+### $J/\psi + \Upsilon + \phi$ 相关分析
 
-存储一系列$\mu^{\pm}$信息，为`std::pair< vector<muon_t>, vector<uint> >`类型别名。
+- 2024.11.5 （主负责：石镇鹏）
+    - 修改代码，使得可以从数据中提取$J/\psi + J/\psi + \phi$过程候选
 
-```cpp
-using muList_t = std::pair< vector<muon_t>, vector<uint> >;
-```
+## 已完成工作
 
-在这一`std::pair`中，第一个元素为`muon_t`列表，第二个元素为`unsigned int`列表，用于存储$\mu^{\pm}$在其列表`thePATMuonHandle`中的下标。**这一下标可以被用于后续排除“重复使用末态粒子”的情况。**
+### 2024.10.31
 
-在本分析中，我们将使用`muList_t`来存储$\mu^+\mu^-$对的信息；在这一`std::pair`中，前后两个`vector`的长度都将为2。
+- 初步开发得到处理$J/\psi + J/\psi + \Upsilon$过程的代码。已经用于处理Run 3在2023年产生的数据。
 
-### 实用自定义函数
+- 修改README.md文件，增加了对于代码的使用说明。
 
-#### 1. `isOverlapPair`：判断两个$\mu^{\pm}$是否重叠
-
-```cpp
-bool MultiLepPAT::isOverlapPair(
-    const muList_t& arg_MuonPair1, 
-    const muList_t& arg_MuonPair2 
-    )
-```
-##### 参数
-
-* `arg_MuonPair1`：第一个$\mu^+\mu^-$对，存储在`muList_t`类型的变量中。
-* `arg_MuonPair2`：第二个$\mu^+\mu^-$对，存储在`muList_t`类型的变量中。
-
-值得注意的是，这里已经假定了`muList_t`对应的$\mu^{\pm}$的个数为2。
-
-##### 返回值
-
-`bool`类型，为`true`时表示两个$\mu^{\pm}$对重叠，为`false`时表示两个$\mu^{\pm}$对不重叠。
-
-#### 2. `particlesToVtx`：将粒子列表拟合为顶点
-
-这个函数一共引入了三个重载版本，分别用于不同的情况。
-
-```cpp
-bool MultiLepPAT::particlesToVtx(
-    const vector<RefCountedKinematicParticle>& arg_FromParticles
-)
-bool MultiLepPAT::particlesToVtx(
-    const vector<RefCountedKinematicParticle>& arg_FromParticles,
-    const string&                              arg_Message    
-)
-bool MultiLepPAT::particlesToVtx(
-    RefCountedKinematicTree&                   arg_VertexFitTree,
-    const vector<RefCountedKinematicParticle>& arg_FromParticles,
-    const string&                              arg_Message
-)
-```
-##### 参数
-
-* `arg_FromParticles`：待拟合的粒子列表，存储在`vector<RefCountedKinematicParticle>`类型的变量中。
-* `arg_VertexFitTree`：拟合结果，存储在相应位置所给定的`RefCountedKinematicTree`（“拟合树”）类型的变量中。
-* `arg_Message`：拟合过程中，遇程序错误时输出到标准输出流的描述信息，存储在`string`类型的变量中。
-
-##### 返回值
-
-`bool`类型，为`true`时表示拟合成功，为`false`时表示拟合失败。
-
-#### 3. `extractFitRes`：从`RefCountedKinematicTree`类型的变量中提取信息
-
-这个函数一共引入了三个重载版本，可以按实际需求提取不同信息。
-
-```cpp
-bool MultiLepPAT::extractFitRes(
-    RefCountedKinematicTree&     arg_VtxTree,
-    RefCountedKinematicParticle& res_Part,
-    RefCountedKinematicVertex&   res_Vtx,
-    KinematicParameters&         res_Param,
-    double&                      res_MassErr
-)
-bool MultiLepPAT::extractFitRes(
-    RefCountedKinematicTree&     arg_VtxTree,
-    RefCountedKinematicParticle& res_Part,
-    RefCountedKinematicVertex&   res_Vtx,
-    double&                      res_MassErr
-)
-bool MultiLepPAT::extractFitRes(
-    RefCountedKinematicTree&     arg_VtxTree,
-    RefCountedKinematicVertex&   res_Vtx,
-    double&                      res_VtxProb
-)
-```
-
-##### 参数
-
-* `arg_VtxTree`：待提取拟合结果的最初“拟合树”（`RefCountedKinematicTree`类型变量）。
-* `res_Part`：提取的初始粒子信息，存储相应位置在所给定的`RefCountedKinematicParticle`类型的变量中。
-* `res_Vtx`：提取的顶点信息，存储在相应位置所给定的`RefCountedKinematicVertex`类型的变量中。
-* `res_Param`：提取的初始粒子动力学参数信息，存储在相应位置所给定的`KinematicParameters`类型的变量中。
-* `res_MassErr`：提取的初始粒子质量不确定度信息，存储在相应位置所给定的`double`类型的变量中。
-* `res_VtxProb`：提取的顶点拟合概率信息，存储在相应位置所给定的`double`类型的变量中。
-
-##### 返回值
-
-`bool`类型，为`true`时表示提取成功，为`false`时表示提取失败。
-
-提示：若需要提取`res_MassErr`，则返回的`bool`值实际为这个误差平方值是否非负。除此之外，其他返回值均为`true`。
-
-#### 4. `getDynamics` ：计算$p_T, \eta, \phi$等动力学信息。
-
-这个函数一共引入了两个重载版本，可以按实际需求从不同数据类型提取不同信息。
-
-```cpp
-void MultiLepPAT::getDynamics(
-    double  arg_mass, 
-    double  arg_px,  double  arg_py,  double  arg_pz,
-    double& res_pt,  double& res_eta, double& res_phi
-)
-void MultiLepPAT::getDynamics(
-    const RefCountedKinematicParticle& arg_Part,
-    double& res_pt,  double& res_eta, double& res_phi
-)
-```
-
-##### 参数
-
-* `arg_mass`：粒子质量，存储在`double`类型的变量中。
-* `arg_px`，`arg_py`，`arg_pz`：粒子动量分量，分别存储在`double`类型的变量中。
-* `arg_Part`：待提取动力学信息的粒子，存储在`RefCountedKinematicParticle`类型的变量中。
-* `res_pt`：提取的**横动量**$p_T$信息，存储在相应位置所给定的`double`类型的变量中。
-* `res_eta`：提取的**赝快度**$\eta$信息，存储在相应位置所给定的`double`类型的变量中。
-* `res_phi`：提取的**方位角**$\phi$信息，存储在相应位置所给定的`double`类型的变量中。
-
-##### 返回值
-
-无返回值
-
-## 主要贡献者
-
-* 王驰(Eric100911)：清华大学致理书院2022级本科生
-* 程幸(Endymion)：清华大学致理书院2022级本科生
-* 石镇鹏：清华大学物理系2023级本科生
-
-指导教师：胡震副教授
-
-## 数据集
+## 数据集性质
 
 ### Run 3：主要数据来源
 
@@ -233,8 +109,217 @@ void MultiLepPAT::getDynamics(
 
 在编写得到$pp \rightarrow J/\psi + J/\psi + \phi \rightarrow 4\mu + 2K$代码之后，将会使用Run 2数据进行分析，用于复现日内瓦大学S. Leontsinis等人结果；通过交叉比对，确认代码可靠性。
 
+## `git`结构说明
 
-### 数据查询工具：CMS DAS命令行界面
+### `master`分支
+
+仅形式化地保留，不进行更新
+
+### `Dev-J-J-U`分支（主要作者：王驰）
+
+作为开发分支，用于开发$J/\psi + J/\psi + \Upsilon$过程的代码。
+
+相对“保守”，不会进行过多的实验性尝试。主要通过从其他分支合并代码来更新。
+
+此部分已经相对完备，并且已经开始在Run 3的2023年数据集上运行。
+
+### `Dev-J-J-P`分支（主要作者：程幸）
+
+作为开发分支，用于开发$J/\psi + J/\psi + \phi$过程的代码。
+
+相对“保守”，不会进行过多的实验性尝试。主要通过从其他分支合并代码来更新。
+
+此部分尚待进一步完善。
+
+未来将会在Run 2的数据集上进行初步测试，与日内瓦大学S. Leontsinis等人的结果进行对比，以验证代码的正确性。
+
+### `Dev-J-U-P`分支（主要作者：石镇鹏）
+
+作为开发分支，用于开发$J/\psi + \Upsilon + \phi$过程的代码。
+
+相对“保守”，不会进行过多的实验性尝试。主要通过从其他分支合并代码来更新。
+
+此部分尚待进一步完善。可以结合`Dev-J-U-P`和`Dev-J-J-U`分支代码进行开发。
+
+
+## 主要贡献者
+
+* 王驰(Eric100911)：清华大学致理书院2022级本科生
+* 程幸(Endymion)：清华大学致理书院2022级本科生
+* 石镇鹏：清华大学物理系2023级本科生
+
+指导教师：胡震副教授
+
+## 参考资料
+
+### 1. 如何重建$\phi$
+
+查阅PDG，并参考S. Leontsinis等人的报告（见群聊），选择以$\phi \rightarrow K^+ + K^-$为重建$\phi$的衰变道。
+
+CMS本身不具备直接鉴别出$K^{\pm}$的能力，因而在分析中，我们从带电径迹中选择两条非$\mu$的径迹并直接假定为$K^{\pm}$。
+
+我们将需要挑选出电性相反的这样两条径迹，并进行顶点拟合。凡是能够进行拟合，并且重建不变质量$m_{KK}$满足
+
+$$
+0.5 \mathrm{GeV/c^2} \leq m_{KK} \leq 1.5 \mathrm{GeV/c^2}
+$$
+
+我们将把这样的径迹对重建结果认为是$\phi$的候选。
+
+我们可以参考$J/\psi + \psi(2S)$过程的分析代码：这一过程需要从一个$J/\psi$和一对$\pi^+\pi^-$重建出$\psi(2S)$，而实际上也只是假定所有的径迹中除了$\mu$以外的径迹都是$\pi^{\pm}$。
+
+因而在我们的分析中，直接处理的代码$K^{\pm}$，相较于原来处理$\pi^{\pm}$的部分，几乎只需要将质量更换为$m_{K^{\pm}}=493.677 \pm 0.015\mathrm{MeV/c^2}$（PDG 2024）。
+
+### 2. 作为参考的代码（来自`Onia2MuMu`代码包）
+
+
+
+
+### 3. 既有代码实现说明
+
+#### 通过`using`声明给出的变量别名
+
+##### (1)  `muon_t`
+
+存储单个$\mu^{\pm}$信息，为`RefCountedKinematicParticle`类型别名。
+
+```cpp
+using muon_t  = RefCountedKinematicParticle;
+```
+
+##### (2) `muList_t`
+
+存储一系列$\mu^{\pm}$信息，为`std::pair< vector<muon_t>, vector<uint> >`类型别名。
+
+```cpp
+using muList_t = std::pair< vector<muon_t>, vector<uint> >;
+```
+
+在这一`std::pair`中，第一个元素为`muon_t`列表，第二个元素为`unsigned int`列表，用于存储$\mu^{\pm}$在其列表`thePATMuonHandle`中的下标。**这一下标可以被用于后续排除“重复使用末态粒子”的情况。**
+
+在本分析中，我们将使用`muList_t`来存储$\mu^+\mu^-$对的信息；在这一`std::pair`中，前后两个`vector`的长度都将为2。
+
+#### 实用自定义函数
+
+##### (1) `isOverlapPair`：判断两个$\mu^{\pm}$是否重叠
+
+```cpp
+bool MultiLepPAT::isOverlapPair(
+    const muList_t& arg_MuonPair1, 
+    const muList_t& arg_MuonPair2 
+    )
+```
+###### 参数
+
+* `arg_MuonPair1`：第一个$\mu^+\mu^-$对，存储在`muList_t`类型的变量中。
+* `arg_MuonPair2`：第二个$\mu^+\mu^-$对，存储在`muList_t`类型的变量中。
+
+值得注意的是，这里已经假定了`muList_t`对应的$\mu^{\pm}$的个数为2。
+
+###### 返回值
+
+`bool`类型，为`true`时表示两个$\mu^{\pm}$对重叠，为`false`时表示两个$\mu^{\pm}$对不重叠。
+
+##### (2) `particlesToVtx`：将粒子列表拟合为顶点
+
+这个函数一共引入了三个重载版本，分别用于不同的情况。
+
+```cpp
+bool MultiLepPAT::particlesToVtx(
+    const vector<RefCountedKinematicParticle>& arg_FromParticles
+)
+bool MultiLepPAT::particlesToVtx(
+    const vector<RefCountedKinematicParticle>& arg_FromParticles,
+    const string&                              arg_Message    
+)
+bool MultiLepPAT::particlesToVtx(
+    RefCountedKinematicTree&                   arg_VertexFitTree,
+    const vector<RefCountedKinematicParticle>& arg_FromParticles,
+    const string&                              arg_Message
+)
+```
+###### 参数
+
+* `arg_FromParticles`：待拟合的粒子列表，存储在`vector<RefCountedKinematicParticle>`类型的变量中。
+* `arg_VertexFitTree`：拟合结果，存储在相应位置所给定的`RefCountedKinematicTree`（“拟合树”）类型的变量中。
+* `arg_Message`：拟合过程中，遇程序错误时输出到标准输出流的描述信息，存储在`string`类型的变量中。
+
+###### 返回值
+
+`bool`类型，为`true`时表示拟合成功，为`false`时表示拟合失败。
+
+##### (3) `extractFitRes`：从`RefCountedKinematicTree`类型的变量中提取信息
+
+这个函数一共引入了三个重载版本，可以按实际需求提取不同信息。
+
+```cpp
+bool MultiLepPAT::extractFitRes(
+    RefCountedKinematicTree&     arg_VtxTree,
+    RefCountedKinematicParticle& res_Part,
+    RefCountedKinematicVertex&   res_Vtx,
+    KinematicParameters&         res_Param,
+    double&                      res_MassErr
+)
+bool MultiLepPAT::extractFitRes(
+    RefCountedKinematicTree&     arg_VtxTree,
+    RefCountedKinematicParticle& res_Part,
+    RefCountedKinematicVertex&   res_Vtx,
+    double&                      res_MassErr
+)
+bool MultiLepPAT::extractFitRes(
+    RefCountedKinematicTree&     arg_VtxTree,
+    RefCountedKinematicVertex&   res_Vtx,
+    double&                      res_VtxProb
+)
+```
+
+###### 参数
+
+* `arg_VtxTree`：待提取拟合结果的最初“拟合树”（`RefCountedKinematicTree`类型变量）。
+* `res_Part`：提取的初始粒子信息，存储相应位置在所给定的`RefCountedKinematicParticle`类型的变量中。
+* `res_Vtx`：提取的顶点信息，存储在相应位置所给定的`RefCountedKinematicVertex`类型的变量中。
+* `res_Param`：提取的初始粒子动力学参数信息，存储在相应位置所给定的`KinematicParameters`类型的变量中。
+* `res_MassErr`：提取的初始粒子质量不确定度信息，存储在相应位置所给定的`double`类型的变量中。
+* `res_VtxProb`：提取的顶点拟合概率信息，存储在相应位置所给定的`double`类型的变量中。
+
+###### 返回值
+
+`bool`类型，为`true`时表示提取成功，为`false`时表示提取失败。
+
+提示：若需要提取`res_MassErr`，则返回的`bool`值实际为这个误差平方值是否非负。除此之外，其他返回值均为`true`。
+
+##### (4) `getDynamics` ：计算$p_T, \eta, \phi$等动力学信息。
+
+这个函数一共引入了两个重载版本，可以按实际需求从不同数据类型提取不同信息。
+
+```cpp
+void MultiLepPAT::getDynamics(
+    double  arg_mass, 
+    double  arg_px,  double  arg_py,  double  arg_pz,
+    double& res_pt,  double& res_eta, double& res_phi
+)
+void MultiLepPAT::getDynamics(
+    const RefCountedKinematicParticle& arg_Part,
+    double& res_pt,  double& res_eta, double& res_phi
+)
+```
+
+###### 参数
+
+* `arg_mass`：粒子质量，存储在`double`类型的变量中。
+* `arg_px`，`arg_py`，`arg_pz`：粒子动量分量，分别存储在`double`类型的变量中。
+* `arg_Part`：待提取动力学信息的粒子，存储在`RefCountedKinematicParticle`类型的变量中。
+* `res_pt`：提取的**横动量**$p_T$信息，存储在相应位置所给定的`double`类型的变量中。
+* `res_eta`：提取的**赝快度**$\eta$信息，存储在相应位置所给定的`double`类型的变量中。
+* `res_phi`：提取的**方位角**$\phi$信息，存储在相应位置所给定的`double`类型的变量中。
+
+###### 返回值
+
+无返回值
+
+
+
+### 4. 数据查询实用工具：CMS DAS命令行界面
 
 运行前需要设置好VOMS代理。调用时，需要使用语句：
 
@@ -244,7 +329,8 @@ void MultiLepPAT::getDynamics(
 
 其中，查询语句`YOUR_DAS_QUERY`与在网页上查看CMS DAS无异。具体使用可以参考https://cmsweb.cern.ch/das/cli 。
 
-## 附录：数据集标签
+
+### 5. 所使用数据集
 
 #### Run 2
 
@@ -396,44 +482,3 @@ void MultiLepPAT::getDynamics(
 /ParkingDoubleMuonLowMass7/Run2023D-PromptReco-v1/MINIAOD
 /ParkingDoubleMuonLowMass7/Run2023D-PromptReco-v2/MINIAOD
 ```
-
-
-### Contributors
-* Wang Chi (Eric100911), undergraduate at Zhili College, Tsinghua University.
-* Cheng Xing, undergraduate at Zhili College, Tsinghua University.
-* Shi Zhenpeng, undergraduate at Dept. of Physics, Tsinghua University.
-
-Supervised under Prof. Hu Zhen at Dept. of Physics, Tsinghua University.
-
-## Overview
-
-### Event Selection Procedure
-
-1. Match $\mu^+\mu^-$ pairs using vertex fitting. (Track geometry only.)
-
-2. Create $J/\psi$ and $\Upsilon$ candidates using $\mu^+\mu^-$ pairs. (Dynamics required. Mass window, pT selection and other restrictions required.)
-
-3. Matching $J/\psi$ and $\Upsilon$ candidates from one single vertex . (Track geometry only. May check $c\tau$ distribution.)
-
-### Efficiency
-
-### Systematics
-
-## Code Framework
-
-### Event Selection Procedure
-
-1. `void LoadMC()` Load MC results if `doMC == true`.
-2. Some other code for initialization
-3. Import trigger results and save for possible trigger matching.
-4. Harvest muons from tracks. Loop over muon pairs.
-5. For muon pair candidataes, apply a crude selection with "opposite-charge criterion" and mass window cut. ( For $J/\psi$, consider mass range $[1.0, 4.0]$. For $\Upsilon$, consider mass range $[8.0, 12.0]$. )
-6. Apply kinematic fitting for each pair to vertices. 
-7. Store valid muon pairs by category. ($J/\psi$ or $\Upsilon$)
-8. Use non-overlapping muon pairs to form $J/\psi$ and $\Upsilon$ candidates. (Careful not to directly store iterators! Use pointers instead.)
-9. Store the candidates and corresponding muon pairs.
-
-### Efficiency
-
-### Systematics
-
