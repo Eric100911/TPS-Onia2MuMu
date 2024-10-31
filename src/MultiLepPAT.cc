@@ -563,7 +563,15 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
 
     // Initialize the muon track block [Annotated by Eric Wang, 20240704]
 
-	if (thePATMuonHandle->size() >= 2) // Require at least 2 muons present [Annotated by Eric Wang, 20240704]
+    // Visualize number of muons
+    std::cout << "Number of muons: " << thePATMuonHandle->size();
+    for (unsigned int i = 0; i <= thePATMuonHandle->size(); i++)
+    {
+        std::cout << "   [++++]   " << std::endl;
+    }
+    std::cout << std::endl;
+
+	if (thePATMuonHandle->size() >= 6) // Require at least 6 muons present [Annotated by Eric Wang, 20240704]
 	{
 		vector<std::string> theInputVariables;
 		theInputVariables.push_back("validFrac");
@@ -779,6 +787,7 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
         // Next muon candidate.
         for(auto iMuon2  = iMuon1 + 1; 
                  iMuon2 != thePATMuonHandle->end(); ++iMuon2){
+            // DEBUG: display current muon pair.
             // Build transient track and store.
             TrackRef muTrack2 = iMuon2->track();
             if (muTrack2.isNull()){
@@ -791,10 +800,12 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
 			}
             // Dynamics selection. A very crude selection.
             // Involves more calculation and is therefore done after kinematics.
-            isJpsiMuPair = (1. < (iMuon1->p4() + iMuon2->p4()).mass()
-                              && (iMuon1->p4() + iMuon2->p4()).mass() < 4.);
+            isJpsiMuPair = (2 < (iMuon1->p4() + iMuon2->p4()).mass()
+                              && (iMuon1->p4() + iMuon2->p4()).mass() < 6);
             isUpsMuPair  = (8. < (iMuon1->p4() + iMuon2->p4()).mass()
                               && (iMuon1->p4() + iMuon2->p4()).mass() < 12.);
+            // isJpsiMuPair = true;
+            // isUpsMuPair  = true;
             if((!isJpsiMuPair) && (!isUpsMuPair)){
                 continue;
             }
@@ -816,8 +827,10 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
             }
             // Clear the transient muon pair for the next pair.
             transMuonPair.pop_back();
+            transMuPairId.pop_back();
         }
         transMuonPair.pop_back();
+        transMuPairId.pop_back();
     }
 
 	//  get X and MyFourMuon cands
@@ -857,13 +870,14 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
     double tmp_pt, tmp_eta, tmp_phi;
 
 
+
     for(auto muPair_Jpsi_1  = muPairCand_Jpsi.begin(); 
              muPair_Jpsi_1 != muPairCand_Jpsi.end();  muPair_Jpsi_1++){
         for(auto muPair_Jpsi_2  = muPair_Jpsi_1 + 1; 
                  muPair_Jpsi_2 != muPairCand_Jpsi.end(); muPair_Jpsi_2++){
             // Check if the muon pairs overlap.
             if(isOverlapPair(*muPair_Jpsi_1, *muPair_Jpsi_2)){
-                continue;
+                 continue;
             }
             for(auto muPair_Ups  = muPairCand_Ups.begin(); 
                      muPair_Ups != muPairCand_Ups.end(); muPair_Ups++){
@@ -901,11 +915,17 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
                         interOnia.push_back(Ups_Fit_noMC);
                         // Fit the quarkonia to the same vertex
                         isValidPri = particlesToVtx(vtxFitTree_Pri, interOnia, "primary vertex");
-			interOnia.pop_back();
+			            interOnia.clear();
+                        std::cout << "Found candidate" << std::endl;
+                        std::cout << "Jpsi_1: " << Jpsi_1_Fit_noMC->currentState().mass() << std::endl;
+                        std::cout << "Jpsi_2: " << Jpsi_2_Fit_noMC->currentState().mass() << std::endl;
+                        std::cout << "Ups: " << Ups_Fit_noMC->currentState().mass() << std::endl;
                     }
                 }
                 // Work with all fit results above. (Jpsi_1, Jpsi_2, Ups, Pri)
                 // Primary vertex fitting comes first.
+  
+
                 if(isValidPri){
                     // Extract the vertex and the particle parameters from valid results.
                     extractFitRes(vtxFitTree_Pri, Pri_Fit_noMC, Pri_Vtx_noMC, tmp_Pri_massErr);
@@ -962,7 +982,9 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
                     Jpsi_1_pt->push_back(tmp_pt);
                 }
                 else{
-                    // Store "error code" -9 for the secondary particles (quarkonia).
+                    
+		// Store "error code" -9 for the secondary particles (quarkonia).
+
                     Jpsi_1_mass->push_back(-9);
                     Jpsi_1_massErr->push_back(-9);
                     Jpsi_1_massDiff->push_back(-9);
@@ -1377,10 +1399,10 @@ void MultiLepPAT::tracksToMuonPair(vector<RefCountedKinematicParticle>&        a
  * [Description]  
  *      Construct muons from tracks.
  *      Assuming muon mass and mass error as PDG 2023 values.
- *      Adds reconstructed muons to the arg_Muons.
+ *      Adds reconstructed muons to the arg_FromParticles.
  * [Parameters]
- *      vector<RefCountedKinematicParticle>&        arg_Muons
- *          - The vector to which reconstructed muons are added.
+ *      vector<RefCountedKinematicParticle>&        arg_FromParticles
+ *          - The vector to which reconstructed particles are added.
  * [Return value]
  *      (void)
  * [Note]
@@ -1388,12 +1410,12 @@ void MultiLepPAT::tracksToMuonPair(vector<RefCountedKinematicParticle>&        a
  *      will be printed in case of failed fitting.
 ******************************************************************************/
 
-bool MultiLepPAT::particlesToVtx(const vector<RefCountedKinematicParticle>&  arg_Muons){
+bool MultiLepPAT::particlesToVtx(const vector<RefCountedKinematicParticle>&  arg_FromParticles){
     KinematicParticleVertexFitter fitter;
     RefCountedKinematicTree vertexFitTree;
     bool fitError = false;
     try{
-        vertexFitTree = fitter.fit(arg_Muons);
+        vertexFitTree = fitter.fit(arg_FromParticles);
     }catch(...){
         fitError = true;
     }
@@ -1409,10 +1431,10 @@ bool MultiLepPAT::particlesToVtx(const vector<RefCountedKinematicParticle>&  arg
  * [Description]  
  *      Construct muons from tracks.
  *      Assuming muon mass and mass error as PDG 2023 values.
- *      Adds reconstructed muons to the arg_Muons.
+ *      Adds reconstructed muons to the arg_FromParticles.
  * [Parameters]
- *      vector<RefCountedKinematicParticle>&        arg_Muons
- *          - The vector to which reconstructed muons are added.
+ *      vector<RefCountedKinematicParticle>&        arg_FromParticles
+ *          - The vector to which reconstructed particles are added.
  *      const string&                               arg_Message  
  *          - The message to be displayed in case of error.
  * [Return value]
@@ -1421,13 +1443,13 @@ bool MultiLepPAT::particlesToVtx(const vector<RefCountedKinematicParticle>&  arg
  *      This definition uses an "implicit" VertexFitter and KinematicTree. 
 ******************************************************************************/
 
-bool MultiLepPAT::particlesToVtx(const vector<RefCountedKinematicParticle>&  arg_Muons,
+bool MultiLepPAT::particlesToVtx(const vector<RefCountedKinematicParticle>&  arg_FromParticles,
                                  const string&                               arg_Message){
     KinematicParticleVertexFitter fitter;
     RefCountedKinematicTree vertexFitTree;
     bool fitError = false;
     try{
-        vertexFitTree = fitter.fit(arg_Muons);
+        vertexFitTree = fitter.fit(arg_FromParticles);
     }catch(...){
         fitError = true;
         std::cout << "[Fit Error] " << arg_Message <<  std::endl;
@@ -1444,10 +1466,10 @@ bool MultiLepPAT::particlesToVtx(const vector<RefCountedKinematicParticle>&  arg
  * [Description]  
  *      Construct muons from tracks.
  *      Assuming muon mass and mass error as PDG 2023 values.
- *      Adds reconstructed muons to the arg_Muons.
+ *      Adds reconstructed muons to the arg_FromParticles.
  * [Parameters]
- *      vector<RefCountedKinematicParticle>&        arg_Muons
- *          - The vector to which reconstructed muons are added.
+ *      vector<RefCountedKinematicParticle>&        arg_FromParticles
+ *          - The vector to which reconstructed particles are added.
  *      const string&                               arg_Message  
  *          - The message to be displayed in case of error.
  *      RefCountedKinematicTree&                    arg_VertexFitTree
@@ -1460,12 +1482,12 @@ bool MultiLepPAT::particlesToVtx(const vector<RefCountedKinematicParticle>&  arg
 ******************************************************************************/
 
 bool MultiLepPAT::particlesToVtx(RefCountedKinematicTree&                    arg_VertexFitTree,
-                                 const vector<RefCountedKinematicParticle>&  arg_Muons,
+                                 const vector<RefCountedKinematicParticle>&  arg_FromParticles,
                                  const string&                               arg_Message){
     KinematicParticleVertexFitter fitter;
     bool fitError = false;
     try{
-        arg_VertexFitTree = fitter.fit(arg_Muons);
+        arg_VertexFitTree = fitter.fit(arg_FromParticles);
     }catch(...){
         fitError = true;
         std::cout << "[Fit Error] " << arg_Message <<  std::endl;
