@@ -224,6 +224,8 @@ bool MultiLepPAT::isOverlapPair(
 
 这个函数一共引入了三个重载版本，分别用于不同的情况。
 
+代码实现中已经有`try-catch`语句，可以保证不会throw（"no-throw guarantee"）。
+
 ```cpp
 bool MultiLepPAT::particlesToVtx(
     const vector<RefCountedKinematicParticle>& arg_FromParticles
@@ -329,6 +331,200 @@ void MultiLepPAT::getDynamics(
 
 其中，查询语句`YOUR_DAS_QUERY`与在网页上查看CMS DAS无异。具体使用可以参考https://cmsweb.cern.ch/das/cli 。
 
+### 4. 作为参考的代码
+
+#### (1) 初始化`theTrackHandle`，提取出带电粒子径迹
+
+```cpp
+edm::Handle<edm::View<pat::PackedCandidate>> theTrackHandle; //  MINIAOD
+iEvent.getByToken(trackToken_, theTrackHandle);				 //  MINIAOD
+std::vector<edm::View<pat::PackedCandidate>::const_iterator> nonMuonPionTrack;
+```
+
+#### (2) 初始化`nonMuonPionTrack`：将所有的带电径迹包含在内
+
+```cpp
+// Copy tracks iterators
+for (edm::View<pat::PackedCandidate>::const_iterator iTrackc = theTrackHandle->begin(); // MINIAOD 
+iTrackc != theTrackHandle->end(); ++iTrackc)
+{
+	nonMuonPionTrack.push_back(iTrackc);
+}
+```
+
+#### (3) 建立`nonMuonPionTrack`：将带电径迹中的$\mu^{\pm}$排除
+
+```cpp
+if (thePATMuonHandle->size() >= 4)
+{
+	// fill muon track block
+	for (edm::View<pat::Muon>::const_iterator iMuonP = thePATMuonHandle->begin(); //  MINIAOD
+		 iMuonP != thePATMuonHandle->end(); ++iMuonP)
+	{
+		/*********************************************************
+         * Some muon info processing here. We skip this part.
+        *********************************************************/
+
+		// Find and delete muon Tracks in PionTracks
+		for (std::vector<edm::View<pat::PackedCandidate>::const_iterator>::const_iterator iTrackfID =  nonMuonPionTrack.begin(); // MINIAOD
+		iTrackfID !=  nonMuonPionTrack.end(); ++iTrackfID)
+		{
+			if(iMuonP->track().isNull())
+			{
+				continue;
+			}
+			edm::View<pat::PackedCandidate>::const_iterator iTrackf = *(iTrackfID);		
+			iMuonP->track()->px();
+
+            /******************************************************************
+             * 通过比较动量确定是否为同一径迹，从而排除muon track。
+             * 注意到CMS通过径迹可以直接给出动量，不需要静止质量或其他参量。
+            ******************************************************************/
+
+			if (iTrackf->px() == iMuonP->track()->px() && iTrackf->py() == iMuonP->track()->py() && iTrackf->pz() == iMuonP->track()->pz())
+			{
+				nonMuonPionTrack.erase(iTrackfID);
+				iTrackfID = iTrackfID - 1;
+			}
+		}
+        /******************************************************************
+         * Some trigger matching here. We skip this part.
+        ******************************************************************/
+	}
+	/******************************************************************
+     * Some trigger matching here. We skip this part.
+    ******************************************************************/
+}
+```
+
+#### (4) 枚举`nonMuonPionTrack`：对带电径迹进行配对
+
+注：为了提升可读性，将一些高度复杂的变量类型用`auto`声明。经测试，这是可以直接平移到真实使用代码的。
+
+```cpp
+for (auto iTrack1ID  = nonMuonPionTrack.begin(); // MINIAOD
+	      iTrack1ID != nonMuonPionTrack.end(); ++iTrack1ID){
+	edm::View<pat::PackedCandidate>::const_iterator iTrack1 = *(iTrack1ID);
+	if (iTrack1->pt() < pionptcut){
+		continue;
+	}
+	for (auto iTrack2ID  = iTrack1ID + 1; // MINIAOD
+		      iTrack2ID != nonMuonPionTrack.end(); ++iTrack2ID){
+		edm::View<pat::PackedCandidate>::const_iterator iTrack2 = *(iTrack2ID);
+		if (iTrack2->pt() < pionptcut)
+		{
+			continue;
+		}
+        /******************************************************************
+         * 校验电荷条件
+        ******************************************************************/
+		if ((iTrack1->charge() + iTrack2->charge()) != 0)
+			continue;
+
+		// MINIAOD begin
+		if (!iTrack1->hasTrackDetails() || iTrack1->charge() == 0)
+		{
+			// cout << "iTrack1->hasTrackDetails() = " << iTrack1->hasTrackDetails() << endl;
+			// cout << "iTrack1->charge() = " << iTrack1->charge() << endl;
+			continue;
+		}
+		if (!iTrack2->hasTrackDetails() || iTrack2->charge() == 0)
+		{
+			// cout << "iTrack2->hasTrackDetails() = " << iTrack2->hasTrackDetails() << endl;
+			// cout << "iTrack2->charge() = " << iTrack2->charge() << endl;
+			continue;
+		}
+		// MINIAOD end
+
+        /******************************************************************
+         * 从一个pi+pi-对和一个J/psi（重建自mu+mu-对）重建psi(2S)。
+         * 为此，先进行方向交角筛选。
+        ******************************************************************/
+
+		TLorentzVector P4_Track1, P4_Track2, P4_Jpsipipi;
+		P4_Track1.SetPtEtaPhiM(iTrack1->pt(), iTrack1->eta(), iTrack1->phi(), myPimass);
+		P4_Track2.SetPtEtaPhiM(iTrack2->pt(), iTrack2->eta(), iTrack2->phi(), myPimass);
+		P4_Jpsipipi = P4_mu1 + P4_mu2 + P4_Track1 + P4_Track2;
+
+		if (P4_Track1.DeltaR(P4_Jpsipipi) > pionDRcut)
+		{
+			continue;
+		}
+		if (P4_Track2.DeltaR(P4_Jpsipipi) > pionDRcut)
+		{
+			continue;
+		}
+
+        /******************************************************************
+         * 建立一个pi+pi-对的TransientTrack
+         * 由此构建一个RefCountedKinematicParticle
+         * 我们需要一个KinematicParticleFactoryFromTransientTrack对象
+         * 这个对象将会用于从TransientTrack转换得到RefCountedKinematicParticle
+         * 我们还将需要一个KinematicParticleVertexFitter
+         * 这个对象将会用于拟合得到的粒子
+        ******************************************************************/
+
+		// TransientTrack trackTT1(*iTrack1, &(bFieldHandle));
+		// TransientTrack trackTT2(*iTrack2, &(bFieldHandle));
+		TransientTrack trackTT1(*(iTrack1->bestTrack()), &(bFieldHandle)); // MINIAOD
+		TransientTrack trackTT2(*(iTrack2->bestTrack()), &(bFieldHandle)); // MINIAOD
+		KinematicParticleFactoryFromTransientTrack JPiPiFactory;
+		// The mass of a muon and the insignificant mass sigma
+		// to avoid singularities in the covariance matrix.
+		ParticleMass pion_mass = myPimass; // pdg mass
+		float pion_sigma = myPimasserr;
+		// initial chi2 and ndf before kinematic fits.
+		float chi = 0.;
+		float ndf = 0.;
+
+        /******************************************************************
+         * 下面开始进行顶点拟合
+        ******************************************************************/
+
+		// mass constrain for psi2s from X6900, now noMC
+		// first fit to have a psi2s
+		vector<RefCountedKinematicParticle> JPiPiParticles;
+		JPiPiParticles.push_back(JPiPiFactory.particle(trackTT1, pion_mass, chi, ndf, pion_sigma));
+		JPiPiParticles.push_back(JPiPiFactory.particle(trackTT2, pion_mass, chi, ndf, pion_sigma));
+		JPiPiParticles.push_back(pmumuFactory.particle(muon1TT, muon_mass, chi, ndf, muon_sigma));
+		JPiPiParticles.push_back(pmumuFactory.particle(muon2TT, muon_mass, chi, ndf, muon_sigma));
+
+        /******************************************************************
+         * 下面的这个部分相当于我们之前写的代码中的particlesToVtx函数。
+        ******************************************************************/
+
+		KinematicParticleVertexFitter JPiPi_fitter;
+		RefCountedKinematicTree JPiPiVertexFitTree;
+		Error_t = false;
+		try
+		{
+			JPiPiVertexFitTree = JPiPi_fitter.fit(JPiPiParticles);
+		}catch(...)
+		{
+			Error_t = true;
+			std::cout<<"error at JPiPinoMC"<<std::endl;
+		}
+		if (Error_t || !(JPiPiVertexFitTree->isValid()))
+		{
+			continue;
+		}
+
+        /******************************************************************
+         * 下面的这个部分相当于我们之前写的代码中的extractFitRes函数。
+        ******************************************************************/
+
+		JPiPiVertexFitTree->movePointerToTheTop();
+		RefCountedKinematicParticle JPiPi_vFit_noMC = JPiPiVertexFitTree->currentParticle();
+		RefCountedKinematicVertex JPiPi_vFit_vertex_noMC = JPiPiVertexFitTree->currentDecayVertex();
+
+		double JPiPi_vtxprob = ChiSquaredProbability((double)(JPiPi_vFit_vertex_noMC->chiSquared()), (double)(JPiPi_vFit_vertex_noMC->degreesOfFreedom()));
+
+        /******************************************************************
+         * 之后是一些后续处理，于我们的分析不直接有关，略去。
+        ******************************************************************/
+    }
+}
+```
 
 ### 5. 所使用数据集
 
