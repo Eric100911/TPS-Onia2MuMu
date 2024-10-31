@@ -1297,7 +1297,7 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
 
 /******************************************************************************
  * [Name of function]  
- *      tracksToMuonPair
+ *      [FIXME]tracksToMuonPair
  * [Description]  
  *      Construct muons from tracks.
  *      Assuming muon mass and mass error as PDG 2023 values.
@@ -1328,7 +1328,7 @@ void MultiLepPAT::getDynamics(double  arg_mass, double  arg_px,  double  arg_py,
 
 /******************************************************************************
  * [Name of function]  
- *      tracksToMuonPair
+ *      [FIXME]tracksToMuonPair
  * [Description]  
  *      Construct muons from tracks.
  *      Assuming muon mass and mass error as PDG 2023 values.

@@ -26,33 +26,29 @@ $pp \rightarrow J/\psi + \Upsilon + \phi \rightarrow 4\mu + 2K$
 
 #### 1. 将$\mu^+\mu^-$配对：仅处理几何条件
 
-从轨迹拟合顶点，检查是否能够给出一定结果，不限制具体`VtxProb`。
+按照电荷配对并从轨迹拟合顶点，检查是否能够给出一定结果，不限制具体`VtxProb`。
 
 #### 2. 将$K^+K^-$配对：仅处理几何条件
 
-从带电径迹中排除$\mu^{\pm}$， 拟合顶点，检查是否能够给出一定结果，不限制具体`VtxProb`。
+从带电径迹中排除$\mu^{\pm}$， 将余下的部分都视为$K^{\pm}$。按照电荷配对并从轨迹拟合顶点，检查是否能够给出一定结果，不限制具体`VtxProb`。
 
-#### 2. 从$\mu^+\mu^-$对创建候选$J/\psi$和$\Upsilon$：使用部分动力学信息
-从通过上一步筛选的$\mu^+\mu^-$对出发，通过不变质量进行分选：
+#### 3. 从$\mu^+\mu^-$对创建候选$J/\psi$和$\Upsilon$：使用部分动力学信息
+
+从通过第1步筛选的$\mu^+\mu^-$对出发，使用不变质量进行粗选：
 
 * 视为$J/\psi$候选：满足 $ 2 \mathrm{GeV/c^2} \leq m_{\mu^+\mu^-} \leq 6 \mathrm{GeV/c^2}$
 
 * 视为$\Upsilon$候选：满足 $ 8 \mathrm{GeV/c^2} \leq m_{\mu^+\mu^-} \leq 12 \mathrm{GeV/c^2}$
 
-#### 3. 从带电径迹对创建候选$\phi$：使用部分动力学信息
+#### 4. 从$K^+K^-$对创建候选$\phi$：使用部分动力学信息
 
+从通过第2步筛选的$K^+K^-$对出发，使用不变质量进行粗选：
 
+要求 $ 0.5 \mathrm{GeV/c^2} \leq m_{K^+K^-} \leq 1.5 \mathrm{GeV/c^2}$。
 
+#### 5. 从候选$J/\psi$, $\Upsilon$和$\phi$寻找整体事例候选
 
-
-随后使用不变质量进行初步筛选，要求 $ 0.5 \mathrm{GeV/c^2} \leq m_{K^+K^-} \leq 1.5 \mathrm{GeV/c^2}$。
-
-
-#### 3. 从候选$J/\psi$和$\Upsilon$寻找整体事例候选
-
-仅处理几何条件：从上一步筛选的$J/\psi$和$\Upsilon$出发，通过顶点拟合，寻找整体事例候选。
-
-具体过程：选择两个候选$J/\psi$和一个候选$\Upsilon$，在确认所使用的$\mu^{\pm}$不相重合后，通过顶点拟合，寻找一个共同的顶点。
+仅处理几何条件：从上一步筛选的$J/\psi$, $\Upsilon$和$\phi$出发，在确保末态粒子不相重叠之后，通过顶点拟合，寻找整体事例候选。
 
 ### 效率评定
 
@@ -61,6 +57,148 @@ $pp \rightarrow J/\psi + \Upsilon + \phi \rightarrow 4\mu + 2K$
 ### 系统误差
 
 （待完善，或另起repository进行）
+
+## 代码实现说明
+
+### 通过`using`声明给出的变量别名
+
+#### 1. `muon_t`
+
+存储单个$\mu^{\pm}$信息，为`RefCountedKinematicParticle`类型别名。
+
+```cpp
+using muon_t  = RefCountedKinematicParticle;
+```
+
+#### 2. `muList_t`
+
+存储一系列$\mu^{\pm}$信息，为`std::pair< vector<muon_t>, vector<uint> >`类型别名。
+
+```cpp
+using muList_t = std::pair< vector<muon_t>, vector<uint> >;
+```
+
+在这一`std::pair`中，第一个元素为`muon_t`列表，第二个元素为`unsigned int`列表，用于存储$\mu^{\pm}$在其列表`thePATMuonHandle`中的下标。**这一下标可以被用于后续排除“重复使用末态粒子”的情况。**
+
+在本分析中，我们将使用`muList_t`来存储$\mu^+\mu^-$对的信息；在这一`std::pair`中，前后两个`vector`的长度都将为2。
+
+### 实用自定义函数
+
+#### 1. `isOverlapPair`：判断两个$\mu^{\pm}$是否重叠
+
+```cpp
+bool MultiLepPAT::isOverlapPair(
+    const muList_t& arg_MuonPair1, 
+    const muList_t& arg_MuonPair2 
+    )
+```
+##### 参数
+
+* `arg_MuonPair1`：第一个$\mu^+\mu^-$对，存储在`muList_t`类型的变量中。
+* `arg_MuonPair2`：第二个$\mu^+\mu^-$对，存储在`muList_t`类型的变量中。
+
+值得注意的是，这里已经假定了`muList_t`对应的$\mu^{\pm}$的个数为2。
+
+##### 返回值
+
+`bool`类型，为`true`时表示两个$\mu^{\pm}$对重叠，为`false`时表示两个$\mu^{\pm}$对不重叠。
+
+#### 2. `particlesToVtx`：将粒子列表拟合为顶点
+
+这个函数一共引入了三个重载版本，分别用于不同的情况。
+
+```cpp
+bool MultiLepPAT::particlesToVtx(
+    const vector<RefCountedKinematicParticle>& arg_FromParticles
+)
+bool MultiLepPAT::particlesToVtx(
+    const vector<RefCountedKinematicParticle>& arg_FromParticles,
+    const string&                              arg_Message    
+)
+bool MultiLepPAT::particlesToVtx(
+    RefCountedKinematicTree&                   arg_VertexFitTree,
+    const vector<RefCountedKinematicParticle>& arg_FromParticles,
+    const string&                              arg_Message
+)
+```
+##### 参数
+
+* `arg_FromParticles`：待拟合的粒子列表，存储在`vector<RefCountedKinematicParticle>`类型的变量中。
+* `arg_VertexFitTree`：拟合结果，存储在相应位置所给定的`RefCountedKinematicTree`（“拟合树”）类型的变量中。
+* `arg_Message`：拟合过程中，遇程序错误时输出到标准输出流的描述信息，存储在`string`类型的变量中。
+
+##### 返回值
+
+`bool`类型，为`true`时表示拟合成功，为`false`时表示拟合失败。
+
+#### 3. `extractFitRes`：从`RefCountedKinematicTree`类型的变量中提取信息
+
+这个函数一共引入了三个重载版本，可以按实际需求提取不同信息。
+
+```cpp
+bool MultiLepPAT::extractFitRes(
+    RefCountedKinematicTree&     arg_VtxTree,
+    RefCountedKinematicParticle& res_Part,
+    RefCountedKinematicVertex&   res_Vtx,
+    KinematicParameters&         res_Param,
+    double&                      res_MassErr
+)
+bool MultiLepPAT::extractFitRes(
+    RefCountedKinematicTree&     arg_VtxTree,
+    RefCountedKinematicParticle& res_Part,
+    RefCountedKinematicVertex&   res_Vtx,
+    double&                      res_MassErr
+)
+bool MultiLepPAT::extractFitRes(
+    RefCountedKinematicTree&     arg_VtxTree,
+    RefCountedKinematicVertex&   res_Vtx,
+    double&                      res_VtxProb
+)
+```
+
+##### 参数
+
+* `arg_VtxTree`：待提取拟合结果的最初“拟合树”（`RefCountedKinematicTree`类型变量）。
+* `res_Part`：提取的初始粒子信息，存储相应位置在所给定的`RefCountedKinematicParticle`类型的变量中。
+* `res_Vtx`：提取的顶点信息，存储在相应位置所给定的`RefCountedKinematicVertex`类型的变量中。
+* `res_Param`：提取的初始粒子动力学参数信息，存储在相应位置所给定的`KinematicParameters`类型的变量中。
+* `res_MassErr`：提取的初始粒子质量不确定度信息，存储在相应位置所给定的`double`类型的变量中。
+* `res_VtxProb`：提取的顶点拟合概率信息，存储在相应位置所给定的`double`类型的变量中。
+
+##### 返回值
+
+`bool`类型，为`true`时表示提取成功，为`false`时表示提取失败。
+
+提示：若需要提取`res_MassErr`，则返回的`bool`值实际为这个误差平方值是否非负。除此之外，其他返回值均为`true`。
+
+#### 4. `getDynamics` ：计算$p_T, \eta, \phi$等动力学信息。
+
+这个函数一共引入了两个重载版本，可以按实际需求从不同数据类型提取不同信息。
+
+```cpp
+void MultiLepPAT::getDynamics(
+    double  arg_mass, 
+    double  arg_px,  double  arg_py,  double  arg_pz,
+    double& res_pt,  double& res_eta, double& res_phi
+)
+void MultiLepPAT::getDynamics(
+    const RefCountedKinematicParticle& arg_Part,
+    double& res_pt,  double& res_eta, double& res_phi
+)
+```
+
+##### 参数
+
+* `arg_mass`：粒子质量，存储在`double`类型的变量中。
+* `arg_px`，`arg_py`，`arg_pz`：粒子动量分量，分别存储在`double`类型的变量中。
+* `arg_Part`：待提取动力学信息的粒子，存储在`RefCountedKinematicParticle`类型的变量中。
+* `res_pt`：提取的**横动量**$p_T$信息，存储在相应位置所给定的`double`类型的变量中。
+* `res_eta`：提取的**赝快度**$\eta$信息，存储在相应位置所给定的`double`类型的变量中。
+* `res_phi`：提取的**方位角**$\phi$信息，存储在相应位置所给定的`double`类型的变量中。
+
+##### 返回值
+
+无返回值
 
 ## 主要贡献者
 
@@ -78,12 +216,18 @@ $pp \rightarrow J/\psi + \Upsilon + \phi \rightarrow 4\mu + 2K$
 
 结合本课题目标过程，选用Run 3中2022以及2023年`ParkingDoubleMuonLowMass[1-7]`系列数据集。
 
-#### 关于Run2023C的特别提示
+#### 关于Run2023C-PromptReco-v2的提示
 在Run2023C数据采集阶段，曾在RAW与AOD之间出现过一些数据处理问题。
 
-这个问题的影响是，在提交crab job时，**需要特别指定Run2023C-v2这一部分数据的run range为$[367516, 367620]$**。
+这个问题的影响是，在提交crab job时，可能需要特别指定Run2023C-v2这一部分数据的run range为$[367516, 367620]$。但是重复数据文件应该已经删除，而且从CMS整体分析工作布局来看，这一问题应该已经解决。
 
-具体信息可以参照[Run3 PdmV twiki](https://twiki.cern.ch/twiki/bin/viewauth/CMS/PdmVRun3Analysis#2023_Era_definition)，以及相关[CMS Talk post](https://cms-talk.web.cern.ch/t/t0-reprocessing-due-to-wrong-raw-version/24528)和[工单](https://its.cern.ch/jira/browse/CMSTZ-1040)
+具体信息可以参照[Run3 PdmV twiki](https://twiki.cern.ch/twiki/bin/viewauth/CMS/PdmVRun3Analysis#2023_Era_definition)，以及相关[CMS Talk post](https://cms-talk.web.cern.ch/t/t0-reprocessing-due-to-wrong-raw-version/24528)和[工单](https://its.cern.ch/jira/browse/CMSTZ-1040)。
+
+#### `TODO`
+
+通过Run2023C-v2与Run2023C-v3的数据进行对比，确认是否有出现重复run。可以用处理结果文件的run number做进行对比。
+
+很可能重复数据已经被剔除了，但是仍然需要检查run number确认。
 
 ### Run 2：辅助确认
 
