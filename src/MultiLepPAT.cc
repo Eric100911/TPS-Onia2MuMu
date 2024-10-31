@@ -901,6 +901,7 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
                         interOnia.push_back(Ups_Fit_noMC);
                         // Fit the quarkonia to the same vertex
                         isValidPri = particlesToVtx(vtxFitTree_Pri, interOnia, "primary vertex");
+			interOnia.pop_back();
                     }
                 }
                 // Work with all fit results above. (Jpsi_1, Jpsi_2, Ups, Pri)
