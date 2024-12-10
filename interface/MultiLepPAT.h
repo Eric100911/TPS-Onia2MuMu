@@ -332,6 +332,8 @@ private:
                   *Phi_ka_1_Idx, *Phi_ka_2_Idx,
                      *Ups_mu_1_Idx,    *Ups_mu_2_Idx;
 
+    // [J-U-P] To add branches for the reconstructed phi.
+
     // Reconstructed Jpsi and Upsilon.
     // Note: Used "vector<T>* a, b" instead of "vector<T> *a, *b"
     vector<float> *Jpsi_1_mass, *Jpsi_1_massErr, *Jpsi_1_massDiff,

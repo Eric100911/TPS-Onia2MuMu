@@ -29,6 +29,11 @@
  *         before I can proceed with the JPsi and Upsilon reconstruction and 
  *         vertex matching. It would prove too troublesome to cover all 
  *         combinations of muon pairs in the "multi-layer-for-loop" structure.
+ *       
+ *      20241029 [Eric Wang and Shi Zhenpeng]
+ *       - The code is branched from Eric-dev-run-loose.
+ *         This will deal with combined production of Jpsi, Upsilon and Phi.
+ *       - Relevant changes will be made at spots marked as "[J-U-P]".
 ******************************************************************************/
 
 // system include files
@@ -189,6 +194,8 @@ MultiLepPAT::MultiLepPAT(const edm::ParameterSet &iConfig)
 	  mupulldXdZ_pos_ArbDef(0), mupulldYdZ_pos_ArbDef(0),
 	  mupulldXdZ_pos_ArbST(0), mupulldYdZ_pos_ArbST(0),
 	  mupulldXdZ_pos_noArb_any(0), mupulldYdZ_pos_noArb_any(0),
+      
+      // [J-U-P] Modify branches to store the original kaon tracks and the reconstructed phi.
 
       Jpsi_1_mu_1_Idx(0), Jpsi_1_mu_2_Idx(0),
       Phi_ka_1_Idx(0), Phi_ka_2_Idx(0),
@@ -726,6 +733,8 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
 
     // Set the mass constraints for further reconstruction. [Annotated by Eric Wang, 20240704]
 
+    // [J-U-P] Switch from pions to kaons.
+
 	// It takes a lot less memory out of the loop
 	KinematicConstraint *Jpsi_cs = new MassKinematicConstraint(myJpsiMass, myJpsiMassErr);
 	KinematicConstraint *Jpsi_cs34 = new MassKinematicConstraint(myJpsiMass, myJpsiMassErr);
@@ -740,6 +749,8 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
 
     // Muon factory
     KinematicParticleFactoryFromTransientTrack muPairFactory;
+
+    // [J-U-P] Will only need 4 muons.
 
     // Will be working reco from 3 pairs of muons. 
 	if (thePATMuonHandle->size() < 4||nonMuonKaonTrack.size()<2)//warning
@@ -790,7 +801,6 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
         // Next muon candidate.
         for(auto iMuon2  = iMuon1 + 1; 
                  iMuon2 != thePATMuonHandle->end(); ++iMuon2){
-            // DEBUG: display current muon pair.
             // Build transient track and store.
             TrackRef muTrack2 = iMuon2->track();
             if (muTrack2.isNull()){
@@ -831,10 +841,14 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
             // Clear the transient muon pair for the next pair.
             transMuonPair.pop_back();
             transMuPairId.pop_back();
+            transMuPairId.pop_back();
         }
         transMuonPair.pop_back();
         transMuPairId.pop_back();
+        transMuPairId.pop_back();
     }
+
+    // [J-U-P] Add appropriate code for phi reconstruction from kaons.
 
 	//  get X and MyFourMuon cands
 
@@ -853,6 +867,9 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
      *      - Possible selection: massErr ratio; total pT^2;
      *      - Add event number 
     **************************************************************************/
+
+    // [J-U-P] Add appropriate code for phi reconstruction from kaons.
+
     // Classes for the fitting process.
     RefCountedKinematicTree vtxFitTree_Jpsi_1;
     RefCountedKinematicTree vtxFitTree_Phi;
@@ -1525,7 +1542,10 @@ void MultiLepPAT::tracksToMuonPair(vector<RefCountedKinematicParticle>&        a
  *      Construct muons from tracks.
  *      Assuming muon mass and mass error as PDG 2023 values.
  *      Adds reconstructed muons to the arg_FromParticles.
+ *      Adds reconstructed muons to the arg_FromParticles.
  * [Parameters]
+ *      vector<RefCountedKinematicParticle>&        arg_FromParticles
+ *          - The vector to which reconstructed particles are added.
  *      vector<RefCountedKinematicParticle>&        arg_FromParticles
  *          - The vector to which reconstructed particles are added.
  * [Return value]
