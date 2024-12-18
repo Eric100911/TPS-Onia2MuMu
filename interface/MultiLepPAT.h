@@ -276,6 +276,9 @@ private:
 	// try
 	static constexpr double myPiMassErr = 0.00000018; // From PDG 2024
 
+    // general restrictions for vtx prob
+    static constexpr double VtxProbCut = 0.01;
+
     // Constructing TTree object [Annotation by Eric Wang, 20240626]
     
     TTree* X_One_Tree_;
