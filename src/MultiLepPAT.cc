@@ -968,8 +968,6 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
                         Ups_mass->push_back(    Ups_Fit_noMC->currentState().mass());
                         Ups_massDiff->push_back(Ups_Fit_noMC->currentState().mass() - myUpsMass);
                         Ups_massErr->push_back( tmp_Ups_massErr);
-                        Ups_ctau->push_back(   GetcTau(   Ups_Vtx_noMC, Ups_Fit_noMC, theBeamSpotV));
-                        Ups_ctauErr->push_back(GetcTauErr(Ups_Vtx_noMC, Ups_Fit_noMC, theBeamSpotV));
                         Ups_Chi2->push_back(double(Ups_Vtx_noMC->chiSquared()));
                         Ups_ndof->push_back(double(Ups_Vtx_noMC->degreesOfFreedom()));
                         Ups_VtxProb->push_back(ChiSquaredProbability((double)(Ups_Vtx_noMC->chiSquared()), 
