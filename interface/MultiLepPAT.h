@@ -330,6 +330,10 @@ private:
     vector<float>  *mupulldXdZ_pos_ArbST, *mupulldYdZ_pos_ArbST;
     vector<float>  *mupulldXdZ_pos_noArb_any, *mupulldYdZ_pos_noArb_any;
 
+    // Muon pairs from Jpsi and Upsilon [Annotation by Eric Wang, 20240626]
+    vector<float> *Jpsi_cand_mass_p4, *Jpsi_cand_mass_fit,
+                   *Ups_cand_mass_p4,  *Ups_cand_mass_fit;
+
     // Muons from Jpsi and Upsilon.
     vector<float> *Jpsi_1_mu_1_Idx, *Jpsi_1_mu_2_Idx, 
                   *Jpsi_2_mu_1_Idx, *Jpsi_2_mu_2_Idx,

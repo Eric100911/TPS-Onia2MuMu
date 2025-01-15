@@ -189,6 +189,9 @@ MultiLepPAT::MultiLepPAT(const edm::ParameterSet &iConfig)
 	  mupulldXdZ_pos_ArbST(0), mupulldYdZ_pos_ArbST(0),
 	  mupulldXdZ_pos_noArb_any(0), mupulldYdZ_pos_noArb_any(0),
 
+      Jpsi_cand_mass_p4(0), Jpsi_cand_mass_fit(0),
+       Ups_cand_mass_p4(0),  Ups_cand_mass_fit(0),
+
       Jpsi_1_mu_1_Idx(0), Jpsi_1_mu_2_Idx(0),
       Jpsi_2_mu_1_Idx(0), Jpsi_2_mu_2_Idx(0),
 	     Ups_mu_1_Idx(0),    Ups_mu_2_Idx(0),
@@ -283,6 +286,7 @@ MultiLepPAT::~MultiLepPAT()
 void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetup)
 {
 	
+    //puts("begin MultiLepPAT::analyze()"); // Display analysis stage for debugging.
 
     // Load the MC results [Annotated by Eric Wang, 20240704]
 
@@ -562,138 +566,131 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
 	}
 
     // Initialize the muon track block [Annotated by Eric Wang, 20240704]
-
-    // Visualize number of muons
-    std::cout << "Number of muons: " << thePATMuonHandle->size();
-    for (unsigned int i = 0; i <= thePATMuonHandle->size(); i++)
-    {
-        std::cout << "   [++++]   " << std::endl;
-    }
-    std::cout << std::endl;
-
-	if (thePATMuonHandle->size() >= 6) // Require at least 6 muons present [Annotated by Eric Wang, 20240704]
+    // Will be working reco from 3 pairs of muons. 
+	if (thePATMuonHandle->size() < 6)
 	{
-		vector<std::string> theInputVariables;
-		theInputVariables.push_back("validFrac");
-		theInputVariables.push_back("globalChi2");
-		theInputVariables.push_back("pt");
-		theInputVariables.push_back("eta");
-		theInputVariables.push_back("segComp");
-		theInputVariables.push_back("chi2LocMom");
-		theInputVariables.push_back("chi2LocPos");
-		theInputVariables.push_back("glbTrackProb");
-		theInputVariables.push_back("NTrkVHits");
-		theInputVariables.push_back("NTrkEHitsOut");
-		ReadBDT muonID(theInputVariables);
-		vector<double> inputValues;
-		inputValues.resize(10, 0.);
+		return;
+	}
+	vector<std::string> theInputVariables;
+	theInputVariables.push_back("validFrac");
+	theInputVariables.push_back("globalChi2");
+	theInputVariables.push_back("pt");
+	theInputVariables.push_back("eta");
+	theInputVariables.push_back("segComp");
+	theInputVariables.push_back("chi2LocMom");
+	theInputVariables.push_back("chi2LocPos");
+	theInputVariables.push_back("glbTrackProb");
+	theInputVariables.push_back("NTrkVHits");
+	theInputVariables.push_back("NTrkEHitsOut");
+	ReadBDT muonID(theInputVariables);
+	vector<double> inputValues;
+	inputValues.resize(10, 0.);
 
-		// fill muon track block
-        // TO_IMPR_CPP11 (for(auto ...)) [Tagged by Eric Wang, 20240704]
-		for (edm::View<pat::Muon>::const_iterator iMuonP =  thePATMuonHandle->begin(); //  MINIAOD
-			                                      iMuonP != thePATMuonHandle->end(); ++iMuonP)
+	// fill muon track block
+    // TO_IMPR_CPP11 (for(auto ...)) [Tagged by Eric Wang, 20240704]
+	for (edm::View<pat::Muon>::const_iterator iMuonP =  thePATMuonHandle->begin(); //  MINIAOD
+		                                      iMuonP != thePATMuonHandle->end(); ++iMuonP)
+	{
+		// push back all muon information
+		++nMu;
+		muIsPatLooseMuon->push_back(iMuonP->isLooseMuon());
+		muIsPatTightMuon->push_back(iMuonP->isTightMuon(thePrimaryV));
+		muIsPatSoftMuon->push_back(iMuonP->isSoftMuon(thePrimaryV));
+		muIsPatMediumMuon->push_back(iMuonP->isMediumMuon());
+
+		muPx->push_back(iMuonP->px());
+		muPy->push_back(iMuonP->py());
+		muPz->push_back(iMuonP->pz());
+		muCharge->push_back(iMuonP->charge());
+
+		int goodSoftMuonNewIlseMod = 0;
+		int goodSoftMuonNewIlse = 0;
+		int goodLooseMuonNew = 0;
+		int goodLooseMuon = 0;
+		int goodTightMuon = 0;
+		
+		
+		// Find and delete muon Tracks in PionTracks
+		for (std::vector<edm::View<pat::PackedCandidate>::const_iterator>::const_iterator iTrackfID  = nonMuonPionTrack.begin(); // MINIAOD
+		                                                                                  iTrackfID != nonMuonPionTrack.end(); 
+                                                                                        ++iTrackfID                             )
 		{
-			// push back all muon information
-			++nMu;
-			muIsPatLooseMuon->push_back(iMuonP->isLooseMuon());
-			muIsPatTightMuon->push_back(iMuonP->isTightMuon(thePrimaryV));
-			muIsPatSoftMuon->push_back(iMuonP->isSoftMuon(thePrimaryV));
-			muIsPatMediumMuon->push_back(iMuonP->isMediumMuon());
-
-			muPx->push_back(iMuonP->px());
-			muPy->push_back(iMuonP->py());
-			muPz->push_back(iMuonP->pz());
-			muCharge->push_back(iMuonP->charge());
-
-			int goodSoftMuonNewIlseMod = 0;
-			int goodSoftMuonNewIlse = 0;
-			int goodLooseMuonNew = 0;
-			int goodLooseMuon = 0;
-			int goodTightMuon = 0;
-			
-			
-			// Find and delete muon Tracks in PionTracks
-			for (std::vector<edm::View<pat::PackedCandidate>::const_iterator>::const_iterator iTrackfID  = nonMuonPionTrack.begin(); // MINIAOD
-			                                                                                  iTrackfID != nonMuonPionTrack.end(); 
-                                                                                            ++iTrackfID                             )
+			if(iMuonP->track().isNull())
 			{
-				if(iMuonP->track().isNull())
-				{
-					continue;
-				}
-				edm::View<pat::PackedCandidate>::const_iterator iTrackf = *(iTrackfID);		
-
-                // Why call the function outside? [Question from Eric Wang, 20240704]
-				iMuonP->track()->px();
-
-                // Match using the momentum. [Annotated by Eric Wang, 20240704]                  
-				if (   iTrackf->px() == iMuonP->track()->px() 
-                    && iTrackf->py() == iMuonP->track()->py() 
-                    && iTrackf->pz() == iMuonP->track()->pz())
-				{
-					nonMuonPionTrack.erase(iTrackfID);
-					iTrackfID = iTrackfID - 1;
-				}
+				continue;
 			}
-			// float mymuMVABs = -1;
+			edm::View<pat::PackedCandidate>::const_iterator iTrackf = *(iTrackfID);		
 
-            // Check if match any HLT for Jpsi and Upsilon [Annotated by Eric Wang, 20240704]
-            // TO_ENC [Tagged by Eric Wang, 20240704]
+            // Why call the function outside? [Question from Eric Wang, 20240704]
+			iMuonP->track()->px();
 
-			bool isJpsiTrigMatch = false;
-
-			for (unsigned int JpsiTrig = 0; JpsiTrig < TriggersForJpsi_.size(); JpsiTrig++)
+            // Match using the momentum. [Annotated by Eric Wang, 20240704]                  
+			if (   iTrackf->px() == iMuonP->track()->px() 
+                && iTrackf->py() == iMuonP->track()->py() 
+                && iTrackf->pz() == iMuonP->track()->pz())
 			{
-				if (JpsiMatchTrig[JpsiTrig] != 0)
-				{
-					const pat::TriggerObjectStandAloneCollection muJpsiHLTMatches = iMuonP->triggerObjectMatchesByFilter(FiltersForJpsi_[JpsiTrig]);
-					bool pass1 = muJpsiHLTMatches.size() > 0;
-					if (pass1)
-						isJpsiTrigMatch = true;
-				}
+				nonMuonPionTrack.erase(iTrackfID);
+				iTrackfID = iTrackfID - 1;
 			}
-
-			muIsJpsiTrigMatch->push_back(isJpsiTrigMatch);
-
-            // TO_ENC [Tagged by Eric Wang, 20240704]
-			bool isUpsTrigMatch = false;
-
-			for (unsigned int UpsTrig = 0; UpsTrig < TriggersForUpsilon_.size(); UpsTrig++)
-			{
-				if (UpsilonMatchTrig[UpsTrig] != 0)
-				{
-					const pat::TriggerObjectStandAloneCollection muUpsHLTMatches =
-						iMuonP->triggerObjectMatchesByFilter(FiltersForUpsilon_[UpsTrig]);
-					bool pass1 = muUpsHLTMatches.size() > 0;
-					if (pass1)
-						isUpsTrigMatch = true;
-				}
-			}
-
-			muIsUpsTrigMatch->push_back(isUpsTrigMatch);
-
-			munMatchedSeg->push_back(-1); // MINIOAOD
-
-			int muL3TriMuonVrtxFilter = 0, muSingleMuL3Filter = 0;
-
-			// Checking Single Trigger
-			for (unsigned int UpsTrig = 0; UpsTrig < TriggersForUpsilon_.size(); UpsTrig++)
-			{
-				if (UpsilonMatchTrig[UpsTrig] != 0)
-				{
-					const pat::TriggerObjectStandAloneCollection muMatchVrxtFilter 
-                                 = iMuonP->triggerObjectMatchesByFilter(vrtxFilter);
-					const pat::TriggerObjectStandAloneCollection muMatchL3Filter   
-                                 = iMuonP->triggerObjectMatchesByFilter(L3Filter);
-
-					muL3TriMuonVrtxFilter = (muMatchVrxtFilter.size() > 0);
-					muSingleMuL3Filter    = (muMatchL3Filter.size()   > 0);
-				}
-			}
-			muUpsVrtxMatch->push_back(muL3TriMuonVrtxFilter); //  MINIAOD
-			muL3TriggerMatch->push_back(muSingleMuL3Filter);  //  MINIAOD
 		}
-	} // if two muons
+		// float mymuMVABs = -1;
+
+        // Check if match any HLT for Jpsi and Upsilon [Annotated by Eric Wang, 20240704]
+        // TO_ENC [Tagged by Eric Wang, 20240704]
+
+		bool isJpsiTrigMatch = false;
+
+		for (unsigned int JpsiTrig = 0; JpsiTrig < TriggersForJpsi_.size(); JpsiTrig++)
+		{
+			if (JpsiMatchTrig[JpsiTrig] != 0)
+			{
+				const pat::TriggerObjectStandAloneCollection muJpsiHLTMatches = iMuonP->triggerObjectMatchesByFilter(FiltersForJpsi_[JpsiTrig]);
+				bool pass1 = muJpsiHLTMatches.size() > 0;
+				if (pass1)
+					isJpsiTrigMatch = true;
+			}
+		}
+
+		muIsJpsiTrigMatch->push_back(isJpsiTrigMatch);
+
+        // TO_ENC [Tagged by Eric Wang, 20240704]
+		bool isUpsTrigMatch = false;
+
+		for (unsigned int UpsTrig = 0; UpsTrig < TriggersForUpsilon_.size(); UpsTrig++)
+		{
+			if (UpsilonMatchTrig[UpsTrig] != 0)
+			{
+				const pat::TriggerObjectStandAloneCollection muUpsHLTMatches =
+					iMuonP->triggerObjectMatchesByFilter(FiltersForUpsilon_[UpsTrig]);
+				bool pass1 = muUpsHLTMatches.size() > 0;
+				if (pass1)
+					isUpsTrigMatch = true;
+			}
+		}
+
+		muIsUpsTrigMatch->push_back(isUpsTrigMatch);
+
+		munMatchedSeg->push_back(-1); // MINIOAOD
+
+		int muL3TriMuonVrtxFilter = 0, muSingleMuL3Filter = 0;
+
+		// Checking Single Trigger
+		for (unsigned int UpsTrig = 0; UpsTrig < TriggersForUpsilon_.size(); UpsTrig++)
+		{
+			if (UpsilonMatchTrig[UpsTrig] != 0)
+			{
+				const pat::TriggerObjectStandAloneCollection muMatchVrxtFilter 
+                             = iMuonP->triggerObjectMatchesByFilter(vrtxFilter);
+				const pat::TriggerObjectStandAloneCollection muMatchL3Filter   
+                             = iMuonP->triggerObjectMatchesByFilter(L3Filter);
+
+				muL3TriMuonVrtxFilter = (muMatchVrxtFilter.size() > 0);
+				muSingleMuL3Filter    = (muMatchL3Filter.size()   > 0);
+			}
+		}
+		muUpsVrtxMatch->push_back(muL3TriMuonVrtxFilter); //  MINIAOD
+		muL3TriggerMatch->push_back(muSingleMuL3Filter);  //  MINIAOD
+	}
 
 	if (doMC)
 	{
@@ -740,12 +737,6 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
     // Muon factory
     KinematicParticleFactoryFromTransientTrack muPairFactory;
 
-    // Will be working reco from 3 pairs of muons. 
-	if (thePATMuonHandle->size() < 6)
-	{
-		return;
-	}
-
     // Temporary storage for the muon pair [Annotated by Eric Wang, 20240704]
     std::vector<RefCountedKinematicParticle> transMuonPair;
     std::vector<uint>                        transMuPairId;
@@ -771,6 +762,12 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
     using muon_t   = RefCountedKinematicParticle;
     using muList_t = std::pair< vector<muon_t>, vector<uint> >;
     std::vector< muList_t > muPairCand_Jpsi, muPairCand_Ups;
+
+    RefCountedKinematicTree     muVtxFitTree;
+    RefCountedKinematicParticle muPair_noMC;
+    RefCountedKinematicVertex   muVtxFit_noMC;
+
+    //puts("begin muon pairing");
 
     // Selection for the muon candidates
     for(auto iMuon1 =  thePATMuonHandle->begin(); 
@@ -798,27 +795,40 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
             if ((iMuon1->charge() + iMuon2->charge()) != 0){
 				continue;
 			}
+            transMuonPair.push_back(muPairFactory.particle(transTrk2,  muMass, 
+                                                           chi2, ndof, muMassSigma) );
+            transMuPairId.push_back(iMuon2 - thePATMuonHandle->begin());
+            //puts("attempting muon pair");
+            //printf("total %ld : [ %d ] and [ %d ]\n", transMuPairId.size(), transMuPairId[0], transMuPairId[1]);
             // Dynamics selection. A very crude selection.
             // Involves more calculation and is therefore done after kinematics.
-            isJpsiMuPair = (2 <  (iMuon1->p4() + iMuon2->p4()).mass()
-                              && (iMuon1->p4() + iMuon2->p4()).mass() < 6);
-            isUpsMuPair  = (8 <  (iMuon1->p4() + iMuon2->p4()).mass()
-                              && (iMuon1->p4() + iMuon2->p4()).mass() < 12);
+            double muPairMassFromP4 = (iMuon1->p4() + iMuon2->p4()).mass();
+            double muPairMassFromFit, muPairMassErrFromFit;
+            isJpsiMuPair = (2 <  muPairMassFromP4 && muPairMassFromP4 < 6);
+            isUpsMuPair  = (8 <  muPairMassFromP4 && muPairMassFromP4 < 12);
             // isJpsiMuPair = true;
             // isUpsMuPair  = true;
             if(isJpsiMuPair || isUpsMuPair){
-                transMuonPair.push_back(muPairFactory.particle(transTrk2,  muMass, 
-                                                           chi2, ndof, muMassSigma) );
-                transMuPairId.push_back(iMuon2 - thePATMuonHandle->begin());
                 if(particlesToVtx(transMuonPair)){
                     // Having passed all the checks, store the muon pair.
+                    particlesToVtx(muVtxFitTree, transMuonPair, "final muon pair");
+                    // Extract the fitted mass from the tree.
+                    extractFitRes(muVtxFitTree, muPair_noMC, muVtxFit_noMC, muPairMassErrFromFit);
+                    muPairMassFromFit = muPair_noMC->currentState().mass();
                     if(isJpsiMuPair){
                         muPairCand_Jpsi.push_back(
                             std::make_pair(transMuonPair, transMuPairId) );
+                            // [DEBUG] Check dimuon mass spectrum.
+                            // Add to the list of Jpsi candidates.
+                            Jpsi_cand_mass_p4->push_back( muPairMassFromP4 );
+                            Jpsi_cand_mass_fit->push_back( muPairMassFromFit );
                     }
                     if(isUpsMuPair){
                         muPairCand_Ups.push_back(
                             std::make_pair(transMuonPair, transMuPairId) );
+                            // [TODO] Check dimuon mass spectrum.
+                            Ups_cand_mass_p4->push_back( muPairMassFromP4 );
+                            Ups_cand_mass_fit->push_back( muPairMassFromFit );
                     }
                 }
             }
@@ -829,6 +839,8 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
         transMuonPair.pop_back();
         transMuPairId.pop_back();
     }
+
+    //puts("end muon pairing");
 
 	//  get X and MyFourMuon cands
 
@@ -866,7 +878,7 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
     // Temporary storage for particle dynamics.
     double tmp_pt, tmp_eta, tmp_phi;
 
-
+    //puts("begin quarkonia fitting");
 
     for(auto muPair_Jpsi_1  = muPairCand_Jpsi.begin(); 
              muPair_Jpsi_1 != muPairCand_Jpsi.end();  muPair_Jpsi_1++){
@@ -991,6 +1003,7 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
             }
         }
     }
+    //puts("end quarkonia fitting");
     // Currently: Event
 	if (Pri_VtxProb->size() > 0 || doMC)
 	{
@@ -1147,6 +1160,12 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
 	muIsPatMediumMuon->clear();
 	muUpsVrtxMatch->clear();
 	muL3TriggerMatch->clear();
+
+    Jpsi_cand_mass_p4->clear();
+    Jpsi_cand_mass_fit->clear();
+    Ups_cand_mass_p4->clear();
+    Ups_cand_mass_fit->clear();
+
 
     Pri_mass->clear();
     Pri_massErr->clear();
@@ -1716,6 +1735,11 @@ void MultiLepPAT::beginJob()
 
 	X_One_Tree_->Branch("muUpsVrtxMatch", &muUpsVrtxMatch);
 	X_One_Tree_->Branch("muL3TriggerMatch", &muL3TriggerMatch);
+
+    X_One_Tree_->Branch("Jpsi_cand_mass_p4", &Jpsi_cand_mass_p4);
+    X_One_Tree_->Branch("Jpsi_cand_mass_fit", &Jpsi_cand_mass_fit);
+    X_One_Tree_->Branch("Ups_cand_mass_p4", &Ups_cand_mass_p4);
+    X_One_Tree_->Branch("Ups_cand_mass_fit", &Ups_cand_mass_fit);
 
     X_One_Tree_->Branch("Jpsi_1_mass", &Jpsi_1_mass);
     X_One_Tree_->Branch("Jpsi_1_massErr", &Jpsi_1_massErr);
