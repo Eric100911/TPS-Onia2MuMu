@@ -289,7 +289,9 @@ private:
     vector<unsigned int>*   trigRes;
     vector<std::string>*    trigNames;
     vector<unsigned int>*   L1TT;
-    vector<std::string>*    MatchTriggerNames;
+    vector<std::string>*    MatchJpsiTrigNames;
+    vector<std::string>*    MatchUpsTrigNames;
+
 
     // primary vertices [Annotation by Eric Wang, 20240626]
     float               priVtxX,    priVtxY,    priVtxZ, 

@@ -37,6 +37,9 @@
 #include "../interface/MultiLepPAT.h"
 #include "../interface/VertexReProducer.h"
 
+#include <memory>
+#include <regex>
+
 #include "FWCore/Framework/interface/Frameworkfwd.h"
 #include "FWCore/Framework/interface/one/EDAnalyzer.h"
 #include "FWCore/Framework/interface/Event.h"
@@ -167,7 +170,7 @@ MultiLepPAT::MultiLepPAT(const edm::ParameterSet &iConfig)
 	  X_One_Tree_(0),
 
 	  runNum(0), evtNum(0), lumiNum(0), nGoodPrimVtx(0),
-	  trigRes(0), trigNames(0), L1TT(0), MatchTriggerNames(0),
+	  trigRes(0), trigNames(0), L1TT(0), MatchJpsiTrigNames(0), MatchUpsTrigNames(0),
 
 	  priVtxX(0), priVtxY(0), priVtxZ(0), priVtxXE(0), priVtxYE(0), priVtxZE(0), priVtxChiNorm(0), priVtxChi(0), priVtxCL(0),
 	  PriVtxXCorrX(0), PriVtxXCorrY(0), PriVtxXCorrZ(0),
@@ -375,11 +378,14 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
      * [Implementation]
      *      - Call getByToken() to acquire HLT results
      *      - Categorize the 
-     * 
+     * [Update Note]
+     *      - Integrated from AliceQuen/Onia2MuMu
     **************************************************************************/
 
 	edm::Handle<edm::TriggerResults> hltresults;
 	bool Error_t = false;
+	unsigned int nJpsitrigger = TriggersForJpsi_.size();
+    unsigned int nUpstrigger  = TriggersForUpsilon_.size();
 	try
 	{
 		iEvent.getByToken(gttriggerToken_, hltresults);
@@ -402,53 +408,70 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
 		}
 
 		edm::TriggerNames triggerNames_;
-		triggerNames_ = iEvent.triggerNames(*hltresults);   // Get trigger names [Annotated by Eric Wang, 20240704]
+		triggerNames_ = iEvent.triggerNames(*hltresults);
 
-		int nUpstrigger = TriggersForUpsilon_.size();
-		int nJpsitrigger = TriggersForJpsi_.size();
-
-		for (int JpsiTrig = 0; JpsiTrig < nJpsitrigger; JpsiTrig++)
-		{
+		for (unsigned int JpsiTrig = 0; JpsiTrig < nJpsitrigger; JpsiTrig++){
 			JpsiMatchTrig[JpsiTrig] = 0;
-		} // Jpsi trigger
+		} // Initiating Jpsi trigger
+        for (unsigned int UpsTrig = 0; UpsTrig < nUpstrigger; UpsTrig++){
+            UpsilonMatchTrig[UpsTrig] = 0;
+        } // Initiating Upsilon trigger
 
-		for (int UpsTrig = 0; UpsTrig < nUpstrigger; UpsTrig++)
+		for (int itrig = 0; itrig < ntrigs; itrig++)            // Loop over all triggers
 		{
-			UpsilonMatchTrig[UpsTrig] = 0;
-		} // upsilon trig
-
-		for (int itrig = 0; itrig < ntrigs; itrig++) // Loop over all triggers [Annotated by Eric Wang, 20240704]
-		{
-			string trigName = triggerNames_.triggerName(itrig);
-			int hltflag = (*hltresults)[itrig].accept();  // What is accept()? [Question from Eric Wang, 20240704]
-			trigRes->push_back(hltflag);
+			string trigName = triggerNames_.triggerName(itrig); // Extracting HLT trigger name
+			int hltflag = (*hltresults)[itrig].accept();        // Check if accepted by this trigger
+			trigRes->push_back(hltflag);                        
 			trigNames->push_back(trigName);
-
-			for (unsigned int JpsiTrig = 0; JpsiTrig < TriggersForJpsi_.size(); JpsiTrig++)
-			{
-				if (TriggersForJpsi_[JpsiTrig] == triggerNames_.triggerName(itrig))
+            // Checking if match any of the Jpsi triggers
+			for (unsigned int JpsiTrig = 0; JpsiTrig < nJpsitrigger; JpsiTrig++)
+			{                                                   
+                // regex matching: "containing the trigger name as substring"
+				std::regex pattern(".*"+TriggersForJpsi_[JpsiTrig]+".*");
+				if (std::regex_search(trigName, pattern))
 				{
 					JpsiMatchTrig[JpsiTrig] = hltflag;
-					break;  // Why break here? [Question from Eric Wang, 20240704]
-				}
-
-			} // Jpsi Trigger
-
-			for (unsigned int UpsTrig = 0; UpsTrig < TriggersForUpsilon_.size(); UpsTrig++)
-			{
-				if (TriggersForUpsilon_[UpsTrig] == triggerNames_.triggerName(itrig))
-				{
-					UpsilonMatchTrig[UpsTrig] = hltflag;
+					bool isDuplicate = false;                   // Flag for duplicate trigger names
+					if(hltflag)
+					{
+						for(unsigned int MatchTrig = 0; MatchTrig < MatchJpsiTrigNames->size(); MatchTrig ++)
+						{
+							if(trigName == MatchJpsiTrigNames->at(MatchTrig))
+							{
+								isDuplicate = true;
+								break;
+							}
+						}
+					}
+					if(!isDuplicate)
+					{
+						MatchJpsiTrigNames->push_back(trigName); // "Triggers that have not appeared in the event"
+					}		
 					break;
 				}
-			} // Upsilon Trigger
+			} // Jpsi Trigger
+            // Check if match any of the Upsilon triggers
+            for (unsigned int UpsTrig = 0; UpsTrig < TriggersForUpsilon_.size(); UpsTrig++){
+                // regex matching: "containing the trigger name as substring"
+                std::regex pattern(".*"+TriggersForUpsilon_[UpsTrig]+".*");
+                if (std::regex_search(trigName, pattern)){
+                    UpsilonMatchTrig[UpsTrig] = hltflag;
+                    bool isDuplicate = false;                   // Flag for duplicate trigger names
+                    if(hltflag){
+                        for(unsigned int MatchTrig = 0; MatchTrig < MatchUpsTrigNames->size(); MatchTrig ++){
+                            if(trigName == MatchUpsTrigNames->at(MatchTrig)){
+                                isDuplicate = true;
+                                break;
+                            }
+                        }
+                    }
+                    if(!isDuplicate){
+                        MatchUpsTrigNames->push_back(trigName); // "Triggers that have not appeared in the event"
+                    }		
+                    break;
+                }
+            }
 		}
-
-		for (int MatchTrig = 0; MatchTrig < nJpsitrigger; MatchTrig++)
-		{
-			MatchTriggerNames->push_back(TriggersForJpsi_[MatchTrig]);
-		}
-
 	} // end of HLT trigger info
 
 	std::string vrtxFilter("hltVertexmumuFilterUpsilonMuon");
@@ -1072,7 +1095,8 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
 	trigRes->clear();
 	trigNames->clear();
 	L1TT->clear();
-	MatchTriggerNames->clear();
+    MatchJpsiTrigNames->clear();
+    MatchUpsTrigNames->clear();
 	muIsJpsiTrigMatch->clear();
 	muIsUpsTrigMatch->clear();
 	runNum = 0;
@@ -1633,7 +1657,8 @@ void MultiLepPAT::beginJob()
 
 	X_One_Tree_->Branch("TrigRes", &trigRes);
 	X_One_Tree_->Branch("TrigNames", &trigNames);
-	X_One_Tree_->Branch("MatchTriggerNames", &MatchTriggerNames);
+    X_One_Tree_->Branch("MatchJpsiTriggerNames", &MatchJpsiTrigNames);
+    X_One_Tree_->Branch("MatchUpsTriggerNames", &MatchUpsTrigNames);
 	X_One_Tree_->Branch("L1TrigRes", &L1TT);
 
 	X_One_Tree_->Branch("evtNum", &evtNum, "evtNum/i");
