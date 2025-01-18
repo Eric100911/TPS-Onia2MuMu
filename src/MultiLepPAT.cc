@@ -35,7 +35,6 @@
 #include "TLorentzVector.h"
 // user include files
 #include "../interface/MultiLepPAT.h"
-#include "../interface/VertexReProducer.h"
 
 #include <memory>
 #include <regex>
@@ -132,6 +131,9 @@
 
 #include "DataFormats/PatCandidates/interface/PackedCandidate.h" // MINIAOD
 
+// #define DISPLAY_STAGE
+#define DISPLAY_DIMUON
+
 typedef math::Error<3>::type CovarianceMatrix;
 typedef ROOT::Math::SVector<double, 3> SVector3;
 typedef ROOT::Math::SMatrix<double, 3, 3, ROOT::Math::MatRepSym<double, 3>> SMatrixSym3D;
@@ -182,9 +184,9 @@ MultiLepPAT::MultiLepPAT(const edm::ParameterSet &iConfig)
 	  muNDF(0), muGlNDF(0), muPhits(0), muShits(0), muGlMuHits(0), muType(0), muQual(0),
 	  muTrack(0), muCharge(0), muIsoratio(0), muIsGoodLooseMuon(0), muIsGoodLooseMuonNew(0),
 	  muIsGoodSoftMuonNewIlse(0), muIsGoodSoftMuonNewIlseMod(0), muIsGoodTightMuon(0), muIsJpsiTrigMatch(0), muIsUpsTrigMatch(0), munMatchedSeg(0),
+      muIsJpsiFilterMatch(0), muIsUpsFilterMatch(0),
 
 	  muIsPatLooseMuon(0), muIsPatTightMuon(0), muIsPatSoftMuon(0), muIsPatMediumMuon(0),
-	  muUpsVrtxMatch(0), muL3TriggerMatch(0),
 
 	  muMVAMuonID(0), musegmentCompatibility(0),
 	  mupulldXdZ_pos_noArb(0), mupulldYdZ_pos_noArb(0),
@@ -288,8 +290,9 @@ MultiLepPAT::~MultiLepPAT()
 // ------------ method called to for each event  ------------
 void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetup)
 {
-	
-    //puts("begin MultiLepPAT::analyze()"); // Display analysis stage for debugging.
+	#ifdef DISPLAY_STAGE
+    puts("begin MultiLepPAT::analyze()"); // Display analysis stage for debugging.
+    #endif
 
     // Load the MC results [Annotated by Eric Wang, 20240704]
 
@@ -385,6 +388,10 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
      * [Update Note]
      *      - Integrated from AliceQuen/Onia2MuMu
     **************************************************************************/
+
+    # ifdef DISPLAY_STAGE
+    puts("HLT Section begins");
+    # endif
 
 	edm::Handle<edm::TriggerResults> hltresults;
 	bool Error_t = false;
@@ -523,6 +530,9 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
 	///////////////////////////////////////////////////////////////////////
 
     // Determine the good vertices [Annotated by Eric Wang, 20240704]
+    #ifdef DISPLAY_STAGE
+    puts("Primary Vertex Section begins");
+    #endif
 
 	int myNGoodPrimVtx = 0;
 	for (unsigned myi = 0; myi < recVtxs->size(); myi++)
@@ -611,6 +621,10 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
 
 	// fill muon track block
     // TO_IMPR_CPP11 (for(auto ...)) [Tagged by Eric Wang, 20240704]
+    #ifdef DISPLAY_STAGE
+    puts("Muon Track Section begins");
+    #endif
+
 	for (edm::View<pat::Muon>::const_iterator iMuonP =  thePATMuonHandle->begin(); //  MINIAOD
 		                                      iMuonP != thePATMuonHandle->end(); ++iMuonP)
 	{
@@ -662,57 +676,77 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
         // TO_ENC [Tagged by Eric Wang, 20240704]
 
 		bool isJpsiTrigMatch = false;
+        bool isJpsiFilterMatch = false;
+
+        #ifdef DISPLAY_STAGE
+        puts("Match to Jpsi Trigger");
+        #endif
 
 		for (unsigned int JpsiTrig = 0; JpsiTrig < TriggersForJpsi_.size(); JpsiTrig++)
 		{
 			if (JpsiMatchTrig[JpsiTrig] != 0)
 			{
-				const pat::TriggerObjectStandAloneCollection muJpsiHLTMatches = iMuonP->triggerObjectMatchesByFilter(FiltersForJpsi_[JpsiTrig]);
-				bool pass1 = muJpsiHLTMatches.size() > 0;
-				if (pass1)
-					isJpsiTrigMatch = true;
+				isJpsiTrigMatch = true;
 			}
 		}
-
 		muIsJpsiTrigMatch->push_back(isJpsiTrigMatch);
+
+        #ifdef DISPLAY_STAGE
+        puts("Match to Jpsi Filter");
+        #endif
+
+        for (unsigned int JpsiFilter = 0; JpsiFilter < FiltersForJpsi_.size(); JpsiFilter++){
+            if(isJpsiTrigMatch){ // remove hltresults.isValid() for now
+                pat::TriggerObjectStandAlone *tempTriggerObject = nullptr;
+                for (auto it = iMuonP->triggerObjectMatches().begin(); it != iMuonP->triggerObjectMatches().end(); ++it){
+                    tempTriggerObject = new pat::TriggerObjectStandAlone(*it);
+					tempTriggerObject->unpackFilterLabels(iEvent, *hltresults);
+                    if(tempTriggerObject->hasFilterLabel(FiltersForJpsi_[JpsiFilter])){
+                        isJpsiFilterMatch = true;
+                    }
+                    delete tempTriggerObject;
+                }
+            }
+        }
+        muIsJpsiFilterMatch->push_back(isJpsiFilterMatch);
 
         // TO_ENC [Tagged by Eric Wang, 20240704]
 		bool isUpsTrigMatch = false;
+        bool isUpsFilterMatch = false;
+
+        #ifdef DISPLAY_STAGE
+        puts("Match to Upsilon Trigger");
+        #endif
 
 		for (unsigned int UpsTrig = 0; UpsTrig < TriggersForUpsilon_.size(); UpsTrig++)
 		{
-			if (UpsilonMatchTrig[UpsTrig] != 0)
-			{
-				const pat::TriggerObjectStandAloneCollection muUpsHLTMatches =
-					iMuonP->triggerObjectMatchesByFilter(FiltersForUpsilon_[UpsTrig]);
-				bool pass1 = muUpsHLTMatches.size() > 0;
-				if (pass1)
-					isUpsTrigMatch = true;
-			}
-		}
+            if (UpsilonMatchTrig[UpsTrig] != 0)
+            {
+                isUpsTrigMatch = true;
+            }
+        }
+        muIsUpsTrigMatch->push_back(isUpsTrigMatch);
 
-		muIsUpsTrigMatch->push_back(isUpsTrigMatch);
+        #ifdef DISPLAY_STAGE
+        puts("Match to Upsilon Filter");
+        #endif
+
+        for (unsigned int UpsFilter = 0; UpsFilter < FiltersForUpsilon_.size(); UpsFilter++){
+            if(isUpsTrigMatch && hltresults.isValid()){
+                pat::TriggerObjectStandAlone *tempTriggerObject = nullptr;
+                for (auto it = iMuonP->triggerObjectMatches().begin(); it != iMuonP->triggerObjectMatches().end(); ++it){
+                    tempTriggerObject = new pat::TriggerObjectStandAlone(*it);
+                    tempTriggerObject->unpackFilterLabels(iEvent, *hltresults);
+                    if(tempTriggerObject->hasFilterLabel(FiltersForUpsilon_[UpsFilter])){
+                        isUpsFilterMatch = true;
+                    }
+                    delete tempTriggerObject;
+                }
+            }
+        }
+        muIsUpsFilterMatch->push_back(isUpsFilterMatch);
 
 		munMatchedSeg->push_back(-1); // MINIOAOD
-
-		int muL3TriMuonVrtxFilter = 0, muSingleMuL3Filter = 0;
-
-		// Checking Single Trigger
-		for (unsigned int UpsTrig = 0; UpsTrig < TriggersForUpsilon_.size(); UpsTrig++)
-		{
-			if (UpsilonMatchTrig[UpsTrig] != 0)
-			{
-				const pat::TriggerObjectStandAloneCollection muMatchVrxtFilter 
-                             = iMuonP->triggerObjectMatchesByFilter(vrtxFilter);
-				const pat::TriggerObjectStandAloneCollection muMatchL3Filter   
-                             = iMuonP->triggerObjectMatchesByFilter(L3Filter);
-
-				muL3TriMuonVrtxFilter = (muMatchVrxtFilter.size() > 0);
-				muSingleMuL3Filter    = (muMatchL3Filter.size()   > 0);
-			}
-		}
-		muUpsVrtxMatch->push_back(muL3TriMuonVrtxFilter); //  MINIAOD
-		muL3TriggerMatch->push_back(muSingleMuL3Filter);  //  MINIAOD
 	}
 
 	if (doMC)
@@ -781,6 +815,9 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
      *      RefCountedKinematicParticle. This saves repeated reco.
     **************************************************************************/
 
+    #ifdef DISPLAY_STAGE
+    puts("Muon Pairing Section begins");
+    #endif
     // Candidates of muon pairs from Jpsi or Upsilon
     using muon_t   = RefCountedKinematicParticle;
     using muList_t = std::pair< vector<muon_t>, vector<uint> >;
@@ -789,8 +826,6 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
     RefCountedKinematicTree     muVtxFitTree;
     RefCountedKinematicParticle muPair_noMC;
     RefCountedKinematicVertex   muVtxFit_noMC;
-
-    //puts("begin muon pairing");
 
     // Selection for the muon candidates
     for(auto iMuon1 =  thePATMuonHandle->begin(); 
@@ -821,8 +856,6 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
             transMuonPair.push_back(muPairFactory.particle(transTrk2,  muMass, 
                                                            chi2, ndof, muMassSigma) );
             transMuPairId.push_back(iMuon2 - thePATMuonHandle->begin());
-            //puts("attempting muon pair");
-            //printf("total %ld : [ %d ] and [ %d ]\n", transMuPairId.size(), transMuPairId[0], transMuPairId[1]);
             // Dynamics selection. A very crude selection.
             // Involves more calculation and is therefore done after kinematics.
             double muPairMassFromP4 = (iMuon1->p4() + iMuon2->p4()).mass();
@@ -843,15 +876,19 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
                             std::make_pair(transMuonPair, transMuPairId) );
                             // [DEBUG] Check dimuon mass spectrum.
                             // Add to the list of Jpsi candidates.
+                            #ifdef DISPLAY_DIMUON
                             Jpsi_cand_mass_p4->push_back( muPairMassFromP4 );
                             Jpsi_cand_mass_fit->push_back( muPairMassFromFit );
+                            #endif
                     }
                     if(isUpsMuPair){
                         muPairCand_Ups.push_back(
                             std::make_pair(transMuonPair, transMuPairId) );
                             // [TODO] Check dimuon mass spectrum.
+                            #ifdef DISPLAY_DIMUON
                             Ups_cand_mass_p4->push_back( muPairMassFromP4 );
                             Ups_cand_mass_fit->push_back( muPairMassFromFit );
+                            #endif
                     }
                 }
             }
@@ -862,8 +899,6 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
         transMuonPair.pop_back();
         transMuPairId.pop_back();
     }
-
-    //puts("end muon pairing");
 
 	//  get X and MyFourMuon cands
 
@@ -882,6 +917,10 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
      *      - Possible selection: massErr ratio; total pT^2;
      *      - Add event number 
     **************************************************************************/
+    #ifdef DISPLAY_STAGE
+    puts("Quarkonia Fitting Section begins");
+    #endif
+
     // Classes for the fitting process.
     RefCountedKinematicTree vtxFitTree_Jpsi_1;
     RefCountedKinematicTree vtxFitTree_Jpsi_2;
@@ -900,8 +939,6 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
     double tmp_Jpsi_1_massErr, tmp_Jpsi_2_massErr, tmp_Ups_massErr, tmp_Pri_massErr;
     // Temporary storage for particle dynamics.
     double tmp_pt, tmp_eta, tmp_phi;
-
-    //puts("begin quarkonia fitting");
 
     for(auto muPair_Jpsi_1  = muPairCand_Jpsi.begin(); 
              muPair_Jpsi_1 != muPairCand_Jpsi.end();  muPair_Jpsi_1++){
@@ -1026,9 +1063,8 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
             }
         }
     }
-    //puts("end quarkonia fitting");
     // Currently: Event
-	if (Pri_VtxProb->size() > 0 || doMC)
+	if (Pri_VtxProb->size() > 0 || doMC || Jpsi_cand_mass_p4->size() > 0 || Ups_cand_mass_p4->size() > 0)
 	{
 		X_One_Tree_->Fill();
 	}
@@ -1111,7 +1147,9 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
     MatchJpsiTrigNames->clear();
     MatchUpsTrigNames->clear();
 	muIsJpsiTrigMatch->clear();
+    muIsJpsiFilterMatch->clear();
 	muIsUpsTrigMatch->clear();
+    muIsUpsFilterMatch->clear();
 	runNum = 0;
 	evtNum = 0;
 	lumiNum = 0;
@@ -1182,8 +1220,6 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
 	muIsPatTightMuon->clear();
 	muIsPatSoftMuon->clear();
 	muIsPatMediumMuon->clear();
-	muUpsVrtxMatch->clear();
-	muL3TriggerMatch->clear();
 
     Jpsi_cand_mass_p4->clear();
     Jpsi_cand_mass_fit->clear();
@@ -1746,6 +1782,8 @@ void MultiLepPAT::beginJob()
 
 	X_One_Tree_->Branch("muIsJpsiTrigMatch", &muIsJpsiTrigMatch);
 	X_One_Tree_->Branch("muIsUpsTrigMatch", &muIsUpsTrigMatch);
+    X_One_Tree_->Branch("muIsJpsiFilterMatch", &muIsJpsiFilterMatch);
+    X_One_Tree_->Branch("muIsUpsFilterMatch", &muIsUpsFilterMatch);
 	X_One_Tree_->Branch("muMVAMuonID", &muMVAMuonID);
 	X_One_Tree_->Branch("musegmentCompatibility", &musegmentCompatibility);
 
@@ -1757,9 +1795,6 @@ void MultiLepPAT::beginJob()
 	X_One_Tree_->Branch("mupulldYdZ_pos_ArbST", &mupulldYdZ_pos_ArbST);
 	X_One_Tree_->Branch("mupulldXdZ_pos_noArb_any", &mupulldXdZ_pos_noArb_any);
 	X_One_Tree_->Branch("mupulldYdZ_pos_noArb_any", &mupulldYdZ_pos_noArb_any);
-
-	X_One_Tree_->Branch("muUpsVrtxMatch", &muUpsVrtxMatch);
-	X_One_Tree_->Branch("muL3TriggerMatch", &muL3TriggerMatch);
 
     X_One_Tree_->Branch("Jpsi_cand_mass_p4", &Jpsi_cand_mass_p4);
     X_One_Tree_->Branch("Jpsi_cand_mass_fit", &Jpsi_cand_mass_fit);

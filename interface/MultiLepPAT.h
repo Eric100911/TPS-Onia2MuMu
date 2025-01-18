@@ -31,7 +31,6 @@
 #include "DataFormats/PatCandidates/interface/PackedCandidate.h" // xining MINIAODtest
 
 // user include files
-#include "../interface/VertexReProducer.h"
 
 #include "FWCore/Framework/interface/Frameworkfwd.h"
 #include "FWCore/Framework/interface/one/EDAnalyzer.h"
@@ -318,6 +317,7 @@ private:
                         *muIsGoodSoftMuonNewIlse,   *muIsGoodSoftMuonNewIlseMod, 
                         *muIsGoodTightMuon,         *muIsJpsiTrigMatch,         
                         *muIsUpsTrigMatch,          *munMatchedSeg;
+    vector<int>         *muIsJpsiFilterMatch,       *muIsUpsFilterMatch;
     vector<int>         *muIsPatLooseMuon, *muIsPatTightMuon, *muIsPatSoftMuon, *muIsPatMediumMuon;
     
     //for Maksat trigger match [Annotation by Eric Wang, 20240626]
