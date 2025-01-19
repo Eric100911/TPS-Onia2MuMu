@@ -86,6 +86,7 @@ process.source = cms.Source("PoolSource",
     skipEvents=cms.untracked.uint32(0),
 	fileNames = cms.untracked.vstring(ivars.inputFiles),
 	eventsToProcess = cms.untracked.VEventRange("367079:791559619-367079:MAX")
+    #eventsToProcess = cms.untracked.VEventRange("370093:527707584-370093:528676824")
 	#eventsToProcess = cms.untracked.VEventRange("367079:970546777")
 )
 
@@ -281,7 +282,7 @@ TriggersForJpsi = cms.untracked.vstring("HLT_Dimuon0_Jpsi3p5_Muon2_v"),
 #TriggersForUpsilon = cms.untracked.vstring("HLT_Dimuon0_Upsilon_Muon_v18","HLT_Dimuon0_Upsilon_Muon_v17","HLT_Dimuon0_Upsilon_Muon_v16","HLT_Dimuon0_Upsilon_Muon_v15","HLT_Dimuon0_Upsilon_Muon_v14","HLT_Dimuon0_Upsilon_Muon_v13","HLT_Dimuon0_Upsilon_Muon_v12","HLT_Dimuon0_Upsilon_Muon_v11","HLT_Dimuon0_Upsilon_Muon_v10","HLT_Dimuon0_Upsilon_Muon_v9","HLT_Dimuon0_Upsilon_Muon_v8","HLT_Dimuon0_Upsilon_Muon_v7","HLT_Dimuon0_Upsilon_Muon_v6","HLT_Dimuon0_Upsilon_Muon_v5","HLT_Dimuon0_Upsilon_Muon_v4","HLT_Dimuon0_Upsilon_Muon_v3","HLT_Dimuon0_Upsilon_Muon_v2","HLT_Dimuon0_Upsilon_Muon_v1"),
 #FiltersForUpsilon = cms.untracked.vstring("hltVertexmumuFilterUpsilonMuon","hltVertexmumuFilterUpsilonMuon","hltVertexmumuFilterUpsilonMuon","hltVertexmumuFilterUpsilonMuon","hltVertexmumuFilterUpsilonMuon","hltVertexmumuFilterUpsilonMuon","hltVertexmumuFilterUpsilonMuon","hltVertexmumuFilterUpsilonMuon","hltVertexmumuFilterUpsilonMuon","hltVertexmumuFilterUpsilonMuon","hltVertexmumuFilterUpsilonMuon","hltVertexmumuFilterUpsilonMuon","hltVertexmumuFilterUpsilonMuon","hltVertexmumuFilterUpsilonMuon","hltVertexmumuFilterUpsilonMuon","hltVertexmumuFilterUpsilonMuon","hltVertexmumuFilterUpsilonMuon","hltVertexmumuFilterUpsilonMuon"),
 
-TriggersForUpsilon = cms.untracked.vstring("HLT_TrimuonOpen_5_3p5_2_Upsilon_Muon_v"),
+TriggersForUpsilon = cms.untracked.vstring("HLT_Trimuon5_3p5_2_Upsilon_Muon_v"),
 FiltersForUpsilon = cms.untracked.vstring("hltVertexmumuFilterUpsilonMuon53p52OpenMuon"),
 
 

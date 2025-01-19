@@ -132,7 +132,7 @@
 #include "DataFormats/PatCandidates/interface/PackedCandidate.h" // MINIAOD
 
 // #define DISPLAY_STAGE
-#define DISPLAY_DIMUON
+// #define DISPLAY_DIMUON
 
 typedef math::Error<3>::type CovarianceMatrix;
 typedef ROOT::Math::SVector<double, 3> SVector3;
@@ -859,7 +859,10 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
             // Dynamics selection. A very crude selection.
             // Involves more calculation and is therefore done after kinematics.
             double muPairMassFromP4 = (iMuon1->p4() + iMuon2->p4()).mass();
-            double muPairMassFromFit, muPairMassErrFromFit;
+            #ifdef DISPLAY_DIMUON
+            double muPairMassFromFit;
+	    double muPairMassErrFromFit;
+            #endif
             isJpsiMuPair = (2 <  muPairMassFromP4 && muPairMassFromP4 < 6);
             isUpsMuPair  = (8 <  muPairMassFromP4 && muPairMassFromP4 < 12);
             // isJpsiMuPair = true;
@@ -869,8 +872,10 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
                     // Having passed all the checks, store the muon pair.
                     particlesToVtx(muVtxFitTree, transMuonPair, "final muon pair");
                     // Extract the fitted mass from the tree.
+                    #ifdef DISPLAY_DIMUON
                     extractFitRes(muVtxFitTree, muPair_noMC, muVtxFit_noMC, muPairMassErrFromFit);
                     muPairMassFromFit = muPair_noMC->currentState().mass();
+                    #endif
                     if(isJpsiMuPair){
                         muPairCand_Jpsi.push_back(
                             std::make_pair(transMuonPair, transMuPairId) );
