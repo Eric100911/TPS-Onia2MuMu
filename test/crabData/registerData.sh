@@ -2,9 +2,32 @@
 # A script to generate crab config file automaticly
 
 # project config
-dataList='Run2023dataList.txt'
-template='crab3_template.py'
+dataList='Run2022dataList_CD.txt'
+template='crab3_template_2022CD.py'
 fileName='crab3'
+
+# Allow parsing from user input in command line
+# Use -l to specify the data list file
+# Use -t to specify the template file
+# Use -n to specify the file name header
+
+while getopts "l:t:n:" opt; do
+  case $opt in
+    l)
+      dataList=$OPTARG
+      ;;
+    t)
+      template=$OPTARG
+      ;;
+    n)
+      fileName=$OPTARG
+      ;;
+    \?)
+      echo "Invalid option: -$OPTARG" >&2
+      ;;
+  esac
+done
+
 cat $dataList | while read rows
 do
 	# tag1,2,3 are tags from CMS data naming standard
