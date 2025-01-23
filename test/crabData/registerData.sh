@@ -2,7 +2,7 @@
 # A script to generate crab config file automaticly
 
 # project config
-dataList='Run2023dataList.txt'
+dataList='Run2024dataList.txt'
 template='crab3_template.py'
 fileName='crab3'
 
