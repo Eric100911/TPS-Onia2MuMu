@@ -279,7 +279,7 @@ TriggersForJpsi = cms.untracked.vstring("HLT_Dimuon0_Jpsi3p5_Muon2_v"),
 #FiltersForUpsilon = cms.untracked.vstring("hltVertexmumuFilterUpsilonMuon","hltVertexmumuFilterUpsilonMuon","hltVertexmumuFilterUpsilonMuon","hltVertexmumuFilterUpsilonMuon","hltVertexmumuFilterUpsilonMuon","hltVertexmumuFilterUpsilonMuon","hltVertexmumuFilterUpsilonMuon","hltVertexmumuFilterUpsilonMuon","hltVertexmumuFilterUpsilonMuon","hltVertexmumuFilterUpsilonMuon","hltVertexmumuFilterUpsilonMuon","hltVertexmumuFilterUpsilonMuon","hltVertexmumuFilterUpsilonMuon","hltVertexmumuFilterUpsilonMuon","hltVertexmumuFilterUpsilonMuon","hltVertexmumuFilterUpsilonMuon","hltVertexmumuFilterUpsilonMuon","hltVertexmumuFilterUpsilonMuon"),
 
 TriggersForUpsilon = cms.untracked.vstring("HLT_Trimuon5_3p5_2_Upsilon_Muon_v"),
-FiltersForUpsilon = cms.untracked.vstring("hltVertexmumuFilterUpsilonMuon53p52OpenMuon"),
+FiltersForUpsilon = cms.untracked.vstring("hltVertexmumuFilterUpsilonMuon"),
 
 
 #        TriggersForJpsi = cms.untracked.vstring("HLT_Dimuon0_Jpsi_Muon_v18","HLT_Dimuon0_Jpsi_Muon_v17","HLT_Dimuon0_Jpsi_Muon_v16","HLT_Dimuon0_J$
