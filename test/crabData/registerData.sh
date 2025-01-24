@@ -2,9 +2,10 @@
 # A script to generate crab config file automaticly
 
 # project config
-dataList='Run2023dataList.txt'
-template='crab3_template.py'
+dataList='Run2022dataList_CD.txt'
+template='crab3_template_2022CD.py'
 fileName='crab3'
+
 # Allow parsing from user input in command line
 # Use -l to specify the data list file
 # Use -t to specify the template file
@@ -26,7 +27,6 @@ while getopts "l:t:n:" opt; do
       ;;
   esac
 done
-
 
 cat $dataList | while read rows
 do
