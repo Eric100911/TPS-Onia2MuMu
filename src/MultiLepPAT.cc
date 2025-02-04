@@ -36,9 +36,6 @@
 // user include files
 #include "../interface/MultiLepPAT.h"
 
-#include <memory>
-#include <regex>
-
 #include "FWCore/Framework/interface/Frameworkfwd.h"
 #include "FWCore/Framework/interface/one/EDAnalyzer.h"
 #include "FWCore/Framework/interface/Event.h"
@@ -108,6 +105,9 @@
 #include <sstream>
 #include <string>
 #include <unordered_set>
+#include <regex>
+#include <cmath>
+
 
 #include "DataFormats/MuonReco/interface/MuonSelectors.h"
 
@@ -294,6 +294,8 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
     puts("begin MultiLepPAT::analyze()"); // Display analysis stage for debugging.
     #endif
 
+    //Relink();
+
     // Load the MC results [Annotated by Eric Wang, 20240704]
 
 	TLorentzVector MC_mu1p4, MC_mu2p4, MC_mu3p4, MC_mu4p4, MC_pi1p4, MC_pi2p4;
@@ -427,13 +429,20 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
         for (unsigned int UpsTrig = 0; UpsTrig < nUpstrigger; UpsTrig++){
             UpsilonMatchTrig[UpsTrig] = 0;
         } // Initiating Upsilon trigger
+        #ifdef DISPLAY_STAGE
+        puts("Initiated Jpsi and Upsilon triggers");
+        #endif
 
 		for (int itrig = 0; itrig < ntrigs; itrig++)            // Loop over all triggers
 		{
 			string trigName = triggerNames_.triggerName(itrig); // Extracting HLT trigger name
 			int hltflag = (*hltresults)[itrig].accept();        // Check if accepted by this trigger
-			trigRes->push_back(hltflag);                        
+            #ifdef DISPLAY_STAGE
+            cout << "Trigger Name: " << trigName << " [ Flag " << hltflag << "]" << std::endl;
+            #endif               
+			trigRes->push_back(hltflag);         
 			trigNames->push_back(trigName);
+
             // Checking if match any of the Jpsi triggers
 			for (unsigned int JpsiTrig = 0; JpsiTrig < nJpsitrigger; JpsiTrig++)
 			{                                                   
@@ -485,6 +494,10 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
 		}
 	} // end of HLT trigger info
 
+    #ifdef DISPLAY_STAGE
+    puts("HLT Section ends");
+    #endif
+
 	std::string vrtxFilter("hltVertexmumuFilterUpsilonMuon");
 	std::string L3Filter("hltTripleMuL3PreFiltered0");
 
@@ -507,6 +520,10 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
 	Vertex theBeamSpotV;
 	BeamSpot beamSpot;
 	math::XYZPoint RefVtx;
+
+    #ifdef DISPLAY_STAGE
+    puts("Primary Vertex Section initiating");
+    #endif
 
 	// get BeamSplot
 	edm::Handle<reco::BeamSpot> beamSpotHandle;
@@ -628,125 +645,134 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
 	for (edm::View<pat::Muon>::const_iterator iMuonP =  thePATMuonHandle->begin(); //  MINIAOD
 		                                      iMuonP != thePATMuonHandle->end(); ++iMuonP)
 	{
-		// push back all muon information
-		++nMu;
-		muIsPatLooseMuon->push_back(iMuonP->isLooseMuon());
-		muIsPatTightMuon->push_back(iMuonP->isTightMuon(thePrimaryV));
-		muIsPatSoftMuon->push_back(iMuonP->isSoftMuon(thePrimaryV));
-		muIsPatMediumMuon->push_back(iMuonP->isMediumMuon());
+        // As reported from ALiceQuen and CMSSW issues,
+        // inf and NaN may appear in CMSSW_14_0_X 
+        // Looking for ways to protect everything.      [Annotated by Eric Wang, 20250121]
+        try{
+		    // push back all muon information
+		    ++nMu;
+		    muIsPatLooseMuon->push_back(iMuonP->isLooseMuon());
+		    muIsPatTightMuon->push_back(iMuonP->isTightMuon(thePrimaryV));
+		    muIsPatSoftMuon->push_back(iMuonP->isSoftMuon(thePrimaryV));
+		    muIsPatMediumMuon->push_back(iMuonP->isMediumMuon());
 
-		muPx->push_back(iMuonP->px());
-		muPy->push_back(iMuonP->py());
-		muPz->push_back(iMuonP->pz());
-		muCharge->push_back(iMuonP->charge());
+		    muPx->push_back(iMuonP->px());
+		    muPy->push_back(iMuonP->py());
+		    muPz->push_back(iMuonP->pz());
+		    muCharge->push_back(iMuonP->charge());
 
-		int goodSoftMuonNewIlseMod = 0;
-		int goodSoftMuonNewIlse = 0;
-		int goodLooseMuonNew = 0;
-		int goodLooseMuon = 0;
-		int goodTightMuon = 0;
-		
-		
-		// Find and delete muon Tracks in PionTracks
-		for (std::vector<edm::View<pat::PackedCandidate>::const_iterator>::const_iterator iTrackfID  = nonMuonPionTrack.begin(); // MINIAOD
-		                                                                                  iTrackfID != nonMuonPionTrack.end(); 
-                                                                                        ++iTrackfID                             )
-		{
-			if(iMuonP->track().isNull())
-			{
-				continue;
-			}
-			edm::View<pat::PackedCandidate>::const_iterator iTrackf = *(iTrackfID);		
+		    int goodSoftMuonNewIlseMod = 0;
+		    int goodSoftMuonNewIlse = 0;
+		    int goodLooseMuonNew = 0;
+		    int goodLooseMuon = 0;
+		    int goodTightMuon = 0;
+    
+    
+		    // Find and delete muon Tracks in PionTracks
+		    for (std::vector<edm::View<pat::PackedCandidate>::const_iterator>::const_iterator iTrackfID  = nonMuonPionTrack.begin(); // MINIAOD
+		                                                                                      iTrackfID != nonMuonPionTrack.end(); 
+                                                                                            ++iTrackfID                             )
+		    {
+                try{
+		    	    if(iMuonP->track().isNull()){
+		    	    	continue;
+		    	    }
+		    	    edm::View<pat::PackedCandidate>::const_iterator iTrackf = *(iTrackfID);		
 
-            // Why call the function outside? [Question from Eric Wang, 20240704]
-			iMuonP->track()->px();
+                    // Why call the function outside? [Question from Eric Wang, 20240704]
+		    	    iMuonP->track()->px();
 
-            // Match using the momentum. [Annotated by Eric Wang, 20240704]                  
-			if (   iTrackf->px() == iMuonP->track()->px() 
-                && iTrackf->py() == iMuonP->track()->py() 
-                && iTrackf->pz() == iMuonP->track()->pz())
-			{
-				nonMuonPionTrack.erase(iTrackfID);
-				iTrackfID = iTrackfID - 1;
-			}
-		}
-		// float mymuMVABs = -1;
+                    // Match using the momentum. [Annotated by Eric Wang, 20240704]                  
+		    	    if (   iTrackf->px() == iMuonP->track()->px() 
+                        && iTrackf->py() == iMuonP->track()->py() 
+                        && iTrackf->pz() == iMuonP->track()->pz()) {
+		    	    	nonMuonPionTrack.erase(iTrackfID);
+		    	    	iTrackfID = iTrackfID - 1;
+		    	    }
+                } catch(...){
+                    continue;
+                }
+		    }
+		    // float mymuMVABs = -1;
 
-        // Check if match any HLT for Jpsi and Upsilon [Annotated by Eric Wang, 20240704]
-        // TO_ENC [Tagged by Eric Wang, 20240704]
+            // Check if match any HLT for Jpsi and Upsilon [Annotated by Eric Wang, 20240704]
+            // TO_ENC [Tagged by Eric Wang, 20240704]
 
-		bool isJpsiTrigMatch = false;
-        bool isJpsiFilterMatch = false;
+		    bool isJpsiTrigMatch = false;
+            bool isJpsiFilterMatch = false;
 
-        #ifdef DISPLAY_STAGE
-        puts("Match to Jpsi Trigger");
-        #endif
+            #ifdef DISPLAY_STAGE
+            puts("Match to Jpsi Trigger");
+            #endif
 
-		for (unsigned int JpsiTrig = 0; JpsiTrig < TriggersForJpsi_.size(); JpsiTrig++)
-		{
-			if (JpsiMatchTrig[JpsiTrig] != 0)
-			{
-				isJpsiTrigMatch = true;
-			}
-		}
-		muIsJpsiTrigMatch->push_back(isJpsiTrigMatch);
+		    for (unsigned int JpsiTrig = 0; JpsiTrig < TriggersForJpsi_.size(); JpsiTrig++)
+		    {
+		    	if (JpsiMatchTrig[JpsiTrig] != 0)
+		    	{
+		    		isJpsiTrigMatch = true;
+		    	}
+		    }
+		    muIsJpsiTrigMatch->push_back(isJpsiTrigMatch);
 
-        #ifdef DISPLAY_STAGE
-        puts("Match to Jpsi Filter");
-        #endif
+            #ifdef DISPLAY_STAGE
+            puts("Match to Jpsi Filter");
+            #endif
 
-        for (unsigned int JpsiFilter = 0; JpsiFilter < FiltersForJpsi_.size(); JpsiFilter++){
-            if(isJpsiTrigMatch){ // remove hltresults.isValid() for now
-                pat::TriggerObjectStandAlone *tempTriggerObject = nullptr;
-                for (auto it = iMuonP->triggerObjectMatches().begin(); it != iMuonP->triggerObjectMatches().end(); ++it){
-                    tempTriggerObject = new pat::TriggerObjectStandAlone(*it);
-					tempTriggerObject->unpackFilterLabels(iEvent, *hltresults);
-                    if(tempTriggerObject->hasFilterLabel(FiltersForJpsi_[JpsiFilter])){
-                        isJpsiFilterMatch = true;
+            for (unsigned int JpsiFilter = 0; JpsiFilter < FiltersForJpsi_.size(); JpsiFilter++){
+                if(isJpsiTrigMatch){ // remove hltresults.isValid() for now
+                    pat::TriggerObjectStandAlone *tempTriggerObject = nullptr;
+                    for (auto it = iMuonP->triggerObjectMatches().begin(); it != iMuonP->triggerObjectMatches().end(); ++it){
+                        tempTriggerObject = new pat::TriggerObjectStandAlone(*it);
+		    			tempTriggerObject->unpackFilterLabels(iEvent, *hltresults);
+                        if(tempTriggerObject->hasFilterLabel(FiltersForJpsi_[JpsiFilter])){
+                            isJpsiFilterMatch = true;
+                        }
+                        delete tempTriggerObject;
                     }
-                    delete tempTriggerObject;
                 }
             }
-        }
-        muIsJpsiFilterMatch->push_back(isJpsiFilterMatch);
+            muIsJpsiFilterMatch->push_back(isJpsiFilterMatch);
 
-        // TO_ENC [Tagged by Eric Wang, 20240704]
-		bool isUpsTrigMatch = false;
-        bool isUpsFilterMatch = false;
+            // TO_ENC [Tagged by Eric Wang, 20240704]
+		    bool isUpsTrigMatch = false;
+            bool isUpsFilterMatch = false;
 
-        #ifdef DISPLAY_STAGE
-        puts("Match to Upsilon Trigger");
-        #endif
+            #ifdef DISPLAY_STAGE
+            puts("Match to Upsilon Trigger");
+            #endif
 
-		for (unsigned int UpsTrig = 0; UpsTrig < TriggersForUpsilon_.size(); UpsTrig++)
-		{
-            if (UpsilonMatchTrig[UpsTrig] != 0)
-            {
-                isUpsTrigMatch = true;
-            }
-        }
-        muIsUpsTrigMatch->push_back(isUpsTrigMatch);
-
-        #ifdef DISPLAY_STAGE
-        puts("Match to Upsilon Filter");
-        #endif
-
-        for (unsigned int UpsFilter = 0; UpsFilter < FiltersForUpsilon_.size(); UpsFilter++){
-            if(isUpsTrigMatch && hltresults.isValid()){
-                pat::TriggerObjectStandAlone *tempTriggerObject = nullptr;
-                for (auto it = iMuonP->triggerObjectMatches().begin(); it != iMuonP->triggerObjectMatches().end(); ++it){
-                    tempTriggerObject = new pat::TriggerObjectStandAlone(*it);
-                    tempTriggerObject->unpackFilterLabels(iEvent, *hltresults);
-                    if(tempTriggerObject->hasFilterLabel(FiltersForUpsilon_[UpsFilter])){
-                        isUpsFilterMatch = true;
-                    }
-                    delete tempTriggerObject;
+		    for (unsigned int UpsTrig = 0; UpsTrig < TriggersForUpsilon_.size(); UpsTrig++)
+		    {
+                if (UpsilonMatchTrig[UpsTrig] != 0)
+                {
+                    isUpsTrigMatch = true;
                 }
             }
-        }
-        muIsUpsFilterMatch->push_back(isUpsFilterMatch);
+            muIsUpsTrigMatch->push_back(isUpsTrigMatch);
 
-		munMatchedSeg->push_back(-1); // MINIOAOD
+            #ifdef DISPLAY_STAGE
+            puts("Match to Upsilon Filter");
+            #endif
+
+            for (unsigned int UpsFilter = 0; UpsFilter < FiltersForUpsilon_.size(); UpsFilter++){
+                if(isUpsTrigMatch && hltresults.isValid()){
+                    pat::TriggerObjectStandAlone *tempTriggerObject = nullptr;
+                    for (auto it = iMuonP->triggerObjectMatches().begin(); it != iMuonP->triggerObjectMatches().end(); ++it){
+                        tempTriggerObject = new pat::TriggerObjectStandAlone(*it);
+                        tempTriggerObject->unpackFilterLabels(iEvent, *hltresults);
+                        if(tempTriggerObject->hasFilterLabel(FiltersForUpsilon_[UpsFilter])){
+                            isUpsFilterMatch = true;
+                        }
+                        delete tempTriggerObject;
+                    }
+                }
+            }
+            muIsUpsFilterMatch->push_back(isUpsFilterMatch);
+
+		    munMatchedSeg->push_back(-1); // MINIOAOD
+            } catch(...){
+                continue;
+            }
 	}
 
 	if (doMC)
@@ -830,79 +856,93 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
     // Selection for the muon candidates
     for(auto iMuon1 =  thePATMuonHandle->begin(); 
              iMuon1 != thePATMuonHandle->end(); ++iMuon1){
-        TrackRef muTrack1 = iMuon1->track();
-        if (muTrack1.isNull()){
-            continue;
-        }
-        // Build transient track and store.
-        TransientTrack transTrk1(muTrack1, &(bFieldHandle));
-        transMuonPair.push_back(muPairFactory.particle(transTrk1, muMass, chi2, ndof, muMassSigma));
-        transMuPairId.push_back(iMuon1 - thePATMuonHandle->begin());
-
-        // Next muon candidate.
-        for(auto iMuon2  = iMuon1 + 1; 
-                 iMuon2 != thePATMuonHandle->end(); ++iMuon2){
-            // DEBUG: display current muon pair.
-            // Build transient track and store.
-            TrackRef muTrack2 = iMuon2->track();
-            if (muTrack2.isNull()){
+        try{
+            TrackRef muTrack1 = iMuon1->track();
+            if (muTrack1.isNull()){
                 continue;
             }
-            TransientTrack transTrk2(muTrack2, &(bFieldHandle));
-            // Charge requirement.
-            if ((iMuon1->charge() + iMuon2->charge()) != 0){
-				continue;
-			}
-            transMuonPair.push_back(muPairFactory.particle(transTrk2,  muMass, 
-                                                           chi2, ndof, muMassSigma) );
-            transMuPairId.push_back(iMuon2 - thePATMuonHandle->begin());
-            // Dynamics selection. A very crude selection.
-            // Involves more calculation and is therefore done after kinematics.
-            double muPairMassFromP4 = (iMuon1->p4() + iMuon2->p4()).mass();
-            #ifdef DISPLAY_DIMUON
-            double muPairMassFromFit;
-	    double muPairMassErrFromFit;
-            #endif
-            isJpsiMuPair = (2 <  muPairMassFromP4 && muPairMassFromP4 < 6);
-            isUpsMuPair  = (8 <  muPairMassFromP4 && muPairMassFromP4 < 12);
-            // isJpsiMuPair = true;
-            // isUpsMuPair  = true;
-            if(isJpsiMuPair || isUpsMuPair){
-                if(particlesToVtx(transMuonPair)){
-                    // Having passed all the checks, store the muon pair.
-                    particlesToVtx(muVtxFitTree, transMuonPair, "final muon pair");
-                    // Extract the fitted mass from the tree.
-                    #ifdef DISPLAY_DIMUON
-                    extractFitRes(muVtxFitTree, muPair_noMC, muVtxFit_noMC, muPairMassErrFromFit);
-                    muPairMassFromFit = muPair_noMC->currentState().mass();
-                    #endif
-                    if(isJpsiMuPair){
-                        muPairCand_Jpsi.push_back(
-                            std::make_pair(transMuonPair, transMuPairId) );
-                            // [DEBUG] Check dimuon mass spectrum.
-                            // Add to the list of Jpsi candidates.
-                            #ifdef DISPLAY_DIMUON
-                            Jpsi_cand_mass_p4->push_back( muPairMassFromP4 );
-                            Jpsi_cand_mass_fit->push_back( muPairMassFromFit );
-                            #endif
+            // Build transient track and store.
+            TransientTrack transTrk1(muTrack1, &(bFieldHandle));
+            transMuonPair.push_back(muPairFactory.particle(transTrk1, muMass, chi2, ndof, muMassSigma));
+            transMuPairId.push_back(iMuon1 - thePATMuonHandle->begin());
+
+            // Next muon candidate.
+            for(auto iMuon2  = iMuon1 + 1; 
+                     iMuon2 != thePATMuonHandle->end(); ++iMuon2){
+                // DEBUG: display current muon pair.
+                // Build transient track and store.
+                try{
+                    TrackRef muTrack2 = iMuon2->track();
+                    if (muTrack2.isNull()){
+                        continue;
                     }
-                    if(isUpsMuPair){
-                        muPairCand_Ups.push_back(
-                            std::make_pair(transMuonPair, transMuPairId) );
-                            // [TODO] Check dimuon mass spectrum.
+                    TransientTrack transTrk2(muTrack2, &(bFieldHandle));
+                    // Charge requirement.
+                    if ((iMuon1->charge() + iMuon2->charge()) != 0){
+		    	    	continue;
+		    	    }
+                    transMuonPair.push_back(muPairFactory.particle(transTrk2,  muMass, 
+                                                                   chi2, ndof, muMassSigma) );
+                    transMuPairId.push_back(iMuon2 - thePATMuonHandle->begin());
+                    // Dynamics selection. A very crude selection.
+                    // Involves more calculation and is therefore done after kinematics.
+                    double muPairMassFromP4 = (iMuon1->p4() + iMuon2->p4()).mass();
+                    #ifdef DISPLAY_DIMUON
+                    double muPairMassFromFit;
+	                double muPairMassErrFromFit;
+                    #endif
+                    isJpsiMuPair = (2 <  muPairMassFromP4 && muPairMassFromP4 < 6);
+                    isUpsMuPair  = (8 <  muPairMassFromP4 && muPairMassFromP4 < 12);
+                    // isJpsiMuPair = true;
+                    // isUpsMuPair  = true;
+                    if(isJpsiMuPair || isUpsMuPair){
+                        if(particlesToVtx(transMuonPair)){
+                            // Having passed all the checks, store the muon pair.
+                            particlesToVtx(muVtxFitTree, transMuonPair, "final muon pair");
+                            // Extract the fitted mass from the tree.
                             #ifdef DISPLAY_DIMUON
-                            Ups_cand_mass_p4->push_back( muPairMassFromP4 );
-                            Ups_cand_mass_fit->push_back( muPairMassFromFit );
+                            extractFitRes(muVtxFitTree, muPair_noMC, muVtxFit_noMC, muPairMassErrFromFit);
+                            muPairMassFromFit = muPair_noMC->currentState().mass();
                             #endif
+                            if(isJpsiMuPair){
+                                muPairCand_Jpsi.push_back(
+                                    std::make_pair(transMuonPair, transMuPairId) );
+                                    // [DEBUG] Check dimuon mass spectrum.
+                                    // Add to the list of Jpsi candidates.
+                                    #ifdef DISPLAY_DIMUON
+                                    Jpsi_cand_mass_p4->push_back( muPairMassFromP4 );
+                                    Jpsi_cand_mass_fit->push_back( muPairMassFromFit );
+                                    #endif
+                            }
+                            if(isUpsMuPair){
+                                muPairCand_Ups.push_back(
+                                    std::make_pair(transMuonPair, transMuPairId) );
+                                    // [TODO] Check dimuon mass spectrum.
+                                    #ifdef DISPLAY_DIMUON
+                                    Ups_cand_mass_p4->push_back( muPairMassFromP4 );
+                                    Ups_cand_mass_fit->push_back( muPairMassFromFit );
+                                    #endif
+                            }
+                        }
+                    }
+                    // Clear the transient muon pair for the next pair.
+                    transMuonPair.pop_back();
+                    transMuPairId.pop_back();
+                } catch(...){
+                    if(transMuonPair.size() > 1){
+                        transMuonPair.pop_back();
+                        transMuPairId.pop_back();
                     }
                 }
             }
-            // Clear the transient muon pair for the next pair.
             transMuonPair.pop_back();
             transMuPairId.pop_back();
+        } catch(...){
+            if(transMuonPair.size() > 0){
+                transMuonPair.pop_back();
+                transMuPairId.pop_back();
+            }
         }
-        transMuonPair.pop_back();
-        transMuPairId.pop_back();
     }
 
 	//  get X and MyFourMuon cands
@@ -940,10 +980,10 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
 
     // Markers for fitting. Only marks if a result is constructed
     bool isValidJpsi_1, isValidJpsi_2, isValidUps, isValidPri;
+    // Receive status value from extractFitRes()
+    bool isValidFitRes_Jpsi_1, isValidFitRes_Jpsi_2, isValidFitRes_Ups, isValidFitRes_Pri = false;
     // Fitted mass error is also stricter marker for fitting.
     double tmp_Jpsi_1_massErr, tmp_Jpsi_2_massErr, tmp_Ups_massErr, tmp_Pri_massErr;
-    // Temporary storage for particle dynamics.
-    double tmp_pt, tmp_eta, tmp_phi;
 
     for(auto muPair_Jpsi_1  = muPairCand_Jpsi.begin(); 
              muPair_Jpsi_1 != muPairCand_Jpsi.end();  muPair_Jpsi_1++){
@@ -970,12 +1010,12 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
                 // Check if all fit trees give non-null results.
                 if(isValidJpsi_1 && isValidJpsi_2 && isValidUps){
                     // Extract the vertex and the particle parameters from valid results.
-                    // Here, when an invalid fit is detected, the massErr is set to -9.
-                    extractFitRes(vtxFitTree_Jpsi_1, Jpsi_1_Fit_noMC, Jpsi_1_Vtx_noMC, tmp_Jpsi_1_massErr);
-                    extractFitRes(vtxFitTree_Jpsi_2, Jpsi_2_Fit_noMC, Jpsi_2_Vtx_noMC, tmp_Jpsi_2_massErr);
-                    extractFitRes(vtxFitTree_Ups,       Ups_Fit_noMC,    Ups_Vtx_noMC,    tmp_Ups_massErr);
+                    // Here, when an invalid fit is detected, the massErr is set to -9. A false flag is returned.
+                    isValidFitRes_Jpsi_1 = extractFitRes(vtxFitTree_Jpsi_1, Jpsi_1_Fit_noMC, Jpsi_1_Vtx_noMC, tmp_Jpsi_1_massErr);
+                    isValidFitRes_Jpsi_2 = extractFitRes(vtxFitTree_Jpsi_2, Jpsi_2_Fit_noMC, Jpsi_2_Vtx_noMC, tmp_Jpsi_2_massErr);
+                    isValidFitRes_Ups    = extractFitRes(vtxFitTree_Ups,    Ups_Fit_noMC,    Ups_Vtx_noMC,    tmp_Ups_massErr);
                     // Look for "Good Fit". Judge by the massErr.
-                    if(tmp_Jpsi_1_massErr >= 0.0 && tmp_Jpsi_2_massErr >= 0.0 && tmp_Ups_massErr >= 0.0){
+                    if(isValidFitRes_Jpsi_1 && isValidFitRes_Jpsi_2 && isValidFitRes_Ups){
                         // Initialize the final fitting marker and the secondary particles.
                         interOnia.push_back(Jpsi_1_Fit_noMC);
                         interOnia.push_back(Jpsi_2_Fit_noMC);
@@ -985,9 +1025,14 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
 			            interOnia.clear();
                     }
                     if(isValidPri){
+                        isValidFitRes_Pri = extractFitRes(vtxFitTree_Pri, Pri_Fit_noMC, Pri_Vtx_noMC, tmp_Pri_massErr);
+                    }
+                    if(isValidFitRes_Pri){
+                        #ifdef DISPLAY_STAGE
+                        puts("Good Fit");
+                        #endif
                         // Extract the vertex and the particle parameters from valid results.
-                        extractFitRes(vtxFitTree_Pri, Pri_Fit_noMC, Pri_Vtx_noMC, tmp_Pri_massErr);
-                        getDynamics(Pri_Fit_noMC, tmp_pt, tmp_eta, tmp_phi);
+                        // getDynamics(Pri_Fit_noMC, tmp_pt, tmp_eta, tmp_phi);
                         // Store the fitting results into temporary vectors.
                         Pri_mass->push_back(Pri_Fit_noMC->currentState().mass());
                         Pri_massErr->push_back(tmp_Pri_massErr);
@@ -997,15 +1042,15 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
                                                                      (double)(Pri_Vtx_noMC->degreesOfFreedom())));
                         Pri_Chi2->push_back(Pri_Vtx_noMC->chiSquared());
                         Pri_ndof->push_back(Pri_Vtx_noMC->degreesOfFreedom());
-                        Pri_px->push_back(Pri_Fit_noMC->currentState().kinematicParameters().momentum().x());
-                        Pri_py->push_back(Pri_Fit_noMC->currentState().kinematicParameters().momentum().y()); 
-                        Pri_pz->push_back(Pri_Fit_noMC->currentState().kinematicParameters().momentum().z());
-                        Pri_phi->push_back(tmp_phi);
-                        Pri_eta->push_back(tmp_eta);
-                        Pri_pt->push_back(tmp_pt);
+                        Pri_px->push_back( Pri_Fit_noMC->currentState().kinematicParameters().momentum().x());
+                        Pri_py->push_back( Pri_Fit_noMC->currentState().kinematicParameters().momentum().y()); 
+                        Pri_pz->push_back( Pri_Fit_noMC->currentState().kinematicParameters().momentum().z());
+                        Pri_phi->push_back(Pri_Fit_noMC->currentState().kinematicParameters().momentum().phi());
+                        Pri_eta->push_back(Pri_Fit_noMC->currentState().kinematicParameters().momentum().eta());
+                        Pri_pt->push_back( Pri_Fit_noMC->currentState().kinematicParameters().momentum().perp());
 
                         // Store the Jpsi 1 fitting results.
-                        getDynamics(Jpsi_1_Fit_noMC, tmp_pt, tmp_eta, tmp_phi);
+                        // getDynamics(Jpsi_1_Fit_noMC, tmp_pt, tmp_eta, tmp_phi);
                         Jpsi_1_mass->push_back(    Jpsi_1_Fit_noMC->currentState().mass());
                         Jpsi_1_massDiff->push_back(Jpsi_1_Fit_noMC->currentState().mass() - myJpsiMass);
                         Jpsi_1_massErr->push_back( tmp_Jpsi_1_massErr);
@@ -1015,15 +1060,15 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
                         Jpsi_1_ndof->push_back(double(Jpsi_1_Vtx_noMC->degreesOfFreedom()));
                         Jpsi_1_VtxProb->push_back(ChiSquaredProbability((double)(Jpsi_1_Vtx_noMC->chiSquared()), 
                                                                         (double)(Jpsi_1_Vtx_noMC->degreesOfFreedom())));
-                        Jpsi_1_px->push_back(Jpsi_1_Fit_noMC->currentState().kinematicParameters().momentum().x());
-                        Jpsi_1_py->push_back(Jpsi_1_Fit_noMC->currentState().kinematicParameters().momentum().y());
-                        Jpsi_1_pz->push_back(Jpsi_1_Fit_noMC->currentState().kinematicParameters().momentum().z());
-                        Jpsi_1_phi->push_back(tmp_phi);
-                        Jpsi_1_eta->push_back(tmp_eta);
-                        Jpsi_1_pt->push_back(tmp_pt);
+                        Jpsi_1_px->push_back( Jpsi_1_Fit_noMC->currentState().kinematicParameters().momentum().x());
+                        Jpsi_1_py->push_back( Jpsi_1_Fit_noMC->currentState().kinematicParameters().momentum().y());
+                        Jpsi_1_pz->push_back( Jpsi_1_Fit_noMC->currentState().kinematicParameters().momentum().z());
+                        Jpsi_1_phi->push_back(Jpsi_1_Fit_noMC->currentState().kinematicParameters().momentum().phi());
+                        Jpsi_1_eta->push_back(Jpsi_1_Fit_noMC->currentState().kinematicParameters().momentum().eta());
+                        Jpsi_1_pt->push_back( Jpsi_1_Fit_noMC->currentState().kinematicParameters().momentum().perp());
 
                         // Store the Jpsi 2 fitting results.
-                        getDynamics(Jpsi_2_Fit_noMC, tmp_pt, tmp_eta, tmp_phi);
+                        // getDynamics(Jpsi_2_Fit_noMC, tmp_pt, tmp_eta, tmp_phi);
                         Jpsi_2_mass->push_back(    Jpsi_2_Fit_noMC->currentState().mass());
                         Jpsi_2_massDiff->push_back(Jpsi_2_Fit_noMC->currentState().mass() - myJpsiMass);
                         Jpsi_2_massErr->push_back( tmp_Jpsi_2_massErr);
@@ -1033,28 +1078,28 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
                         Jpsi_2_ndof->push_back(double(Jpsi_2_Vtx_noMC->degreesOfFreedom()));
                         Jpsi_2_VtxProb->push_back(ChiSquaredProbability((double)(Jpsi_2_Vtx_noMC->chiSquared()), 
                                                                         (double)(Jpsi_2_Vtx_noMC->degreesOfFreedom())));
-                        Jpsi_2_px->push_back(Jpsi_2_Fit_noMC->currentState().kinematicParameters().momentum().x());
-                        Jpsi_2_py->push_back(Jpsi_2_Fit_noMC->currentState().kinematicParameters().momentum().y());
-                        Jpsi_2_pz->push_back(Jpsi_2_Fit_noMC->currentState().kinematicParameters().momentum().z());
-                        Jpsi_2_phi->push_back(tmp_phi);
-                        Jpsi_2_eta->push_back(tmp_eta);
-                        Jpsi_2_pt->push_back(tmp_pt);
+                        Jpsi_2_px->push_back( Jpsi_2_Fit_noMC->currentState().kinematicParameters().momentum().x());
+                        Jpsi_2_py->push_back( Jpsi_2_Fit_noMC->currentState().kinematicParameters().momentum().y());
+                        Jpsi_2_pz->push_back( Jpsi_2_Fit_noMC->currentState().kinematicParameters().momentum().z());
+                        Jpsi_2_phi->push_back(Jpsi_2_Fit_noMC->currentState().kinematicParameters().momentum().phi());
+                        Jpsi_2_eta->push_back(Jpsi_2_Fit_noMC->currentState().kinematicParameters().momentum().eta());
+                        Jpsi_2_pt->push_back( Jpsi_2_Fit_noMC->currentState().kinematicParameters().momentum().perp());
                         
                         // Store the Upsilon fitting results.
-                        getDynamics(Ups_Fit_noMC, tmp_pt, tmp_eta, tmp_phi);
+                        // getDynamics(Ups_Fit_noMC, tmp_pt, tmp_eta, tmp_phi);
                         Ups_mass->push_back(    Ups_Fit_noMC->currentState().mass());
                         Ups_massDiff->push_back(Ups_Fit_noMC->currentState().mass() - myUpsMass);
                         Ups_massErr->push_back( tmp_Ups_massErr);
                         Ups_Chi2->push_back(double(Ups_Vtx_noMC->chiSquared()));
                         Ups_ndof->push_back(double(Ups_Vtx_noMC->degreesOfFreedom()));
                         Ups_VtxProb->push_back(ChiSquaredProbability((double)(Ups_Vtx_noMC->chiSquared()), 
-                                                                    (double)(Ups_Vtx_noMC->degreesOfFreedom())));
-                        Ups_px->push_back(Ups_Fit_noMC->currentState().kinematicParameters().momentum().x());
-                        Ups_py->push_back(Ups_Fit_noMC->currentState().kinematicParameters().momentum().y());
-                        Ups_pz->push_back(Ups_Fit_noMC->currentState().kinematicParameters().momentum().z());
-                        Ups_phi->push_back(tmp_phi);
-                        Ups_eta->push_back(tmp_eta);
-                        Ups_pt->push_back(tmp_pt);
+                                                                     (double)(Ups_Vtx_noMC->degreesOfFreedom())));
+                        Ups_px->push_back( Ups_Fit_noMC->currentState().kinematicParameters().momentum().x());
+                        Ups_py->push_back( Ups_Fit_noMC->currentState().kinematicParameters().momentum().y());
+                        Ups_pz->push_back( Ups_Fit_noMC->currentState().kinematicParameters().momentum().z());
+                        Ups_phi->push_back(Ups_Fit_noMC->currentState().kinematicParameters().momentum().phi());
+                        Ups_eta->push_back(Ups_Fit_noMC->currentState().kinematicParameters().momentum().eta());
+                        Ups_pt->push_back( Ups_Fit_noMC->currentState().kinematicParameters().momentum().perp());
 
                         // Store the index of the muons.
                         Jpsi_1_mu_1_Idx->push_back(muPair_Jpsi_1->second[0]);
@@ -1068,11 +1113,18 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
             }
         }
     }
+    #ifdef DISPLAY_STAGE
+    puts("Event Filling Section begins");
+    DisplayTempBranchInfo();
+    #endif
     // Currently: Event
 	if (Pri_VtxProb->size() > 0 || doMC || Jpsi_cand_mass_p4->size() > 0 || Ups_cand_mass_p4->size() > 0)
 	{
 		X_One_Tree_->Fill();
 	}
+    #ifdef DISPLAY_STAGE
+    puts("Event Filling Section ends");
+    #endif
 
 	if (Debug_)
 	{
@@ -1427,7 +1479,8 @@ bool MultiLepPAT::particlesToVtx(const vector<RefCountedKinematicParticle>&  arg
 	RefCountedKinematicVertex vFit_vertex_noMC = vertexFitTree->currentDecayVertex();
 	double vtxprob;
     try{
-        vtxprob = ChiSquaredProbability((double)(vFit_vertex_noMC->chiSquared()), (double)(vFit_vertex_noMC->degreesOfFreedom()));
+        vtxprob = ChiSquaredProbability((double)(vFit_vertex_noMC->chiSquared()),
+                                        (double)(vFit_vertex_noMC->degreesOfFreedom()));
     }catch(...){
         vtxprob = 0.0;
     }   
@@ -1470,7 +1523,8 @@ bool MultiLepPAT::particlesToVtx(const vector<RefCountedKinematicParticle>&  arg
     RefCountedKinematicVertex vFit_vertex_noMC = vertexFitTree->currentDecayVertex();
 	double vtxprob;
     try{
-        vtxprob = ChiSquaredProbability((double)(vFit_vertex_noMC->chiSquared()), (double)(vFit_vertex_noMC->degreesOfFreedom()));
+        vtxprob = ChiSquaredProbability((double)(vFit_vertex_noMC->chiSquared()),
+                                        (double)(vFit_vertex_noMC->degreesOfFreedom()));
     }catch(...){
         vtxprob = 0.0;
     }   
@@ -1515,7 +1569,8 @@ bool MultiLepPAT::particlesToVtx(RefCountedKinematicTree&                    arg
     RefCountedKinematicVertex vFit_vertex_noMC = arg_VertexFitTree->currentDecayVertex();
 	double vtxprob;
     try{
-        vtxprob = ChiSquaredProbability((double)(vFit_vertex_noMC->chiSquared()), (double)(vFit_vertex_noMC->degreesOfFreedom()));
+        vtxprob = ChiSquaredProbability((double)(vFit_vertex_noMC->chiSquared()),
+                                        (double)(vFit_vertex_noMC->degreesOfFreedom()));
     }catch(...){
         vtxprob = 0.0;
     }   
@@ -1557,12 +1612,17 @@ bool MultiLepPAT::extractFitRes(RefCountedKinematicTree&     arg_VtxTree,
                                 double&                      res_MassErr){
     double tmp_MassErr2 = 0.0;
     arg_VtxTree->movePointerToTheTop();
-    // Extract particle and vertex.
-    res_Part  = arg_VtxTree->currentParticle();
-    res_Vtx   = arg_VtxTree->currentDecayVertex();
-    // Obtain mass error squared and other parameters for the vertex.
-    res_Param    = res_Part->currentState().kinematicParameters();
-    tmp_MassErr2 = res_Part->currentState().kinematicParametersError().matrix()(6, 6);
+    try{
+        // Extract particle and vertex.
+        res_Part  = arg_VtxTree->currentParticle();
+        res_Vtx   = arg_VtxTree->currentDecayVertex();
+        // Obtain mass error squared and other parameters for the vertex.
+        res_Param    = res_Part->currentState().kinematicParameters();
+        tmp_MassErr2 = res_Part->currentState().kinematicParametersError().matrix()(6, 6);
+    }
+    catch(...){
+        tmp_MassErr2 = -9;
+    }
     // Judge if the fit have been a good fit.
     if(tmp_MassErr2 < 0.0){
         res_MassErr = -9;
@@ -1604,11 +1664,16 @@ bool MultiLepPAT::extractFitRes(RefCountedKinematicTree&     arg_VtxTree,
                                 double&                      res_MassErr){
     double tmp_MassErr2 = 0.0;
     arg_VtxTree->movePointerToTheTop();
-    // Extract particle and vertex.
-    res_Part  = arg_VtxTree->currentParticle();
-    res_Vtx   = arg_VtxTree->currentDecayVertex();
-    // Obtain mass error squared and other parameters for the vertex.
-    tmp_MassErr2 = res_Part->currentState().kinematicParametersError().matrix()(6, 6);
+    try{
+        // Extract particle and vertex.
+        res_Part  = arg_VtxTree->currentParticle();
+        res_Vtx   = arg_VtxTree->currentDecayVertex();
+        // Obtain mass error squared and other parameters for the vertex.
+        tmp_MassErr2 = res_Part->currentState().kinematicParametersError().matrix()(6, 6);
+    }
+    catch(...){
+        tmp_MassErr2 = -9;
+    }
     // Judge if the fit have been a good fit.
     if(tmp_MassErr2 < 0.0){
         res_MassErr = -9;
@@ -1643,13 +1708,20 @@ bool MultiLepPAT::extractFitRes(RefCountedKinematicTree&     arg_VtxTree,
 bool MultiLepPAT::extractFitRes(RefCountedKinematicTree&     arg_VtxTree,
                                 RefCountedKinematicVertex&   res_Vtx,
                                 double&                      res_VtxProb){
-    arg_VtxTree->movePointerToTheTop();
-    // Extract particle and vertex.
-    res_Vtx   = arg_VtxTree->currentDecayVertex();
-    // Obtain mass error squared and other parameters for the vertex.
-    res_VtxProb = ChiSquaredProbability((double)(res_Vtx->chiSquared()), 
-                                        (double)(res_Vtx->degreesOfFreedom()));
-    return true;
+    bool fitError = false;
+    try{
+        arg_VtxTree->movePointerToTheTop();
+        // Extract particle and vertex.
+        res_Vtx   = arg_VtxTree->currentDecayVertex();
+        // Obtain mass error squared and other parameters for the vertex.
+        res_VtxProb = ChiSquaredProbability((double)(res_Vtx->chiSquared()), 
+                                            (double)(res_Vtx->degreesOfFreedom()));
+    }
+    catch(...){
+        fitError = true;
+        res_VtxProb = -9.0;
+    }
+    return (!fitError) && (res_VtxProb >= 0.0);
 }
 
 /******************************************************************************
@@ -1714,7 +1786,7 @@ void MultiLepPAT::beginJob()
 
 	// estree_ = fs->make<TTree>("eventSummary", "General Event Summary");
 	X_One_Tree_ = fs->make<TTree>("X_data", "X(3872) Data");
-
+    
 	X_One_Tree_->Branch("TrigRes", &trigRes);
 	X_One_Tree_->Branch("TrigNames", &trigNames);
     X_One_Tree_->Branch("MatchJpsiTriggerNames", &MatchJpsiTrigNames);
@@ -1869,8 +1941,6 @@ void MultiLepPAT::beginJob()
     X_One_Tree_->Branch("Pri_eta", &Pri_eta);
     X_One_Tree_->Branch("Pri_pt", &Pri_pt);
 
-
-
 	if (doMC)
 	{
 		X_One_Tree_->Branch("MC_X_px", &MC_X_px);
@@ -1925,39 +1995,82 @@ void MultiLepPAT::beginJob()
 // CTau calculation from fitted vertex. [Annotated by Eric Wang, 20240705]
 double MultiLepPAT::GetcTau(RefCountedKinematicVertex&   decayVrtx, 
                             RefCountedKinematicParticle& kinePart, 
-                            Vertex&                             bs ){	
+                            Vertex&                             bs ){
     TVector3 vtx;
     TVector3 pvtx;
     vtx.SetXYZ((*decayVrtx).position().x(), (*decayVrtx).position().y(), 0);
     pvtx.SetXYZ(bs.position().x(), bs.position().y(), 0);
-    VertexDistanceXY vdistXY;
     TVector3 pperp(kinePart->currentState().globalMomentum().x(),
-    	           kinePart->currentState().globalMomentum().y(), 
-                   0                                              );
-
+        kinePart->currentState().globalMomentum().y(), 0);
     TVector3 vdiff = vtx - pvtx;
+
+    //Jinfeng 10.3
+    GlobalError DecayErr = (*decayVrtx).error();
+    GlobalError PrimaryErr = bs.error();
+
+    AlgebraicSymMatrix33 LxyErrMatrix = DecayErr.matrix() + PrimaryErr.matrix();
+    AlgebraicVector3 vdiff_;
+    vdiff_[0] = vdiff.x();
+    vdiff_[1] = vdiff.y();
+    vdiff_[2] = 0;
+
+    double LxyErr2 = ROOT::Math::Similarity(LxyErrMatrix, vdiff_);
+    double LxyPVErr = 0;
+    // double LxyPVSig = 0;
+
     double cosAlpha = vdiff.Dot(pperp) / (vdiff.Perp() * pperp.Perp());
-    Measurement1D distXY = vdistXY.distance(Vertex(*decayVrtx), Vertex(bs));
-    double ctauPV = distXY.value() * cosAlpha * kinePart->currentState().mass() / pperp.Perp();
+    double LxyPV = vdiff.Dot(pperp) / pperp.Mag();
+    double Lxy = vdiff.Perp();
+    double ctauPV = LxyPV * kinePart->currentState().mass() / pperp.Perp();
+
+    if (Lxy != 0)
+        LxyPVErr = TMath::Sqrt(LxyErr2) / Lxy * cosAlpha;
+
+    if (LxyPVErr != 0)
+        double LxyPVSig = LxyPV / LxyPVErr;
+
+    //Jinfeng
+    // if (MassConstraint) {
+    //     temp_Lxy_MC = Lxy;
+    //     temp_LxyPV_MC = LxyPV;
+    //     temp_CosAlpha_MC = cosAlpha;
+    //     temp_LxyPVErr_MC = LxyPVErr;
+    //     temp_LxyPVSig_MC = LxyPVSig;
+    // }
+    // else {
+    //     temp_Lxy_noMC = Lxy;
+    //     temp_LxyPV_noMC = LxyPV;
+    //     temp_CosAlpha_noMC = cosAlpha;
+    //     temp_LxyPVErr_noMC = LxyPVErr;
+    //     temp_LxyPVSig_noMC = LxyPVSig;
+    // }
+
     return ctauPV;    
 }
 
 // CTau error calculation from fitted vertex. [Annotated by Eric Wang, 20240705]
 double MultiLepPAT:: GetcTauErr( RefCountedKinematicVertex& decayVrtx, 
                                  RefCountedKinematicParticle& kinePart, 
-                                 Vertex& bs                              ){       
+                                 Vertex& bs                              ){     
     TVector3 pperp(kinePart->currentState().globalMomentum().x(),
 	               kinePart->currentState().globalMomentum().y(), 
                    0                                              );
     AlgebraicVector vpperp(3);
-    vpperp[0] = pperp.x();
-    vpperp[1] = pperp.y();
-    vpperp[2] = 0.;
+    double ctauErrPV;
+    try{
+        vpperp[0] = pperp.x();
+        vpperp[1] = pperp.y();
+        vpperp[2] = 0.;
 
-    GlobalError v1e = (Vertex(*decayVrtx)).error();
-    GlobalError v2e = bs.error();
-    AlgebraicSymMatrix vXYe = asHepMatrix(v1e.matrix()) + asHepMatrix(v2e.matrix());
-    double ctauErrPV = sqrt(vXYe.similarity(vpperp)) * kinePart->currentState().mass() / (pperp.Perp2());
+        GlobalError v1e = (*decayVrtx).error();
+        GlobalError v2e = bs.error();
+        AlgebraicSymMatrix vXYe = asHepMatrix(v1e.matrix()) + asHepMatrix(v2e.matrix());
+        ctauErrPV = sqrt(vXYe.similarity(vpperp)) * kinePart->currentState().mass() / (pperp.Perp2());
+    }
+    catch(...){
+
+        ctauErrPV = -99999;
+    }
 
     return ctauErrPV;    
 }
@@ -2009,6 +2122,377 @@ bool MultiLepPAT::muonMatchTrigType(const edm::View<pat::Muon>::const_iterator& 
     return false;
 }
 
+/******************************************************************************
+ * [Name of function]  
+ *      DisplayTempBranchInfo
+ * [Description]   
+ *      Display all the vectors to be filled into TTree.
+ *      First size then content.
+ * [Parameters]
+ *      (void)
+ * [Return value]
+ *      (void)
+ * [Note]
+ *      
+******************************************************************************/
+
+void MultiLepPAT::DisplayTempBranchInfo() const{
+    printf("nMu: %d\n", nMu);
+    printf("muPx: %ld\n", muPx->size());
+    // Display the content of muPx
+    for (auto cur_muPx: *muPx) printf("%f ", cur_muPx);
+    printf("muPy: %ld\n", muPy->size());
+    printf("muPz: %ld\n", muPz->size());
+    printf("muD0: %ld\n", muD0->size());
+    printf("muD0E: %ld\n", muD0E->size());
+    printf("muDz: %ld\n", muDz->size());
+    printf("muChi2: %ld\n", muChi2->size());
+    printf("muGlChi2: %ld\n", muGlChi2->size());
+    printf("mufHits: %ld\n", mufHits->size());
+    printf("muFirstBarrel: %ld\n", muFirstBarrel->size());
+    printf("muFirstEndCap: %ld\n", muFirstEndCap->size());
+    printf("muDzVtx: %ld\n", muDzVtx->size());
+    printf("muDxyVtx: %ld\n", muDxyVtx->size());
+    printf("muNDF: %ld\n", muNDF->size());
+    printf("muGlNDF: %ld\n", muGlNDF->size());
+    printf("muPhits: %ld\n", muPhits->size());
+    printf("muShits: %ld\n", muShits->size());
+    printf("muGlMuHits: %ld\n", muGlMuHits->size());
+    printf("muType: %ld\n", muType->size());
+    printf("muQual: %ld\n", muQual->size());
+    printf("muTrack: %ld\n", muTrack->size());
+    printf("muCharge: %ld\n", muCharge->size());
+    printf("muIsoratio: %ld\n", muIsoratio->size());
+    printf("munMatchedSeg: %ld\n", munMatchedSeg->size());
+    printf("muIsGoodSoftMuonNewIlseMod: %ld\n", muIsGoodSoftMuonNewIlseMod->size());
+    printf("muIsGoodSoftMuonNewIlse: %ld\n", muIsGoodSoftMuonNewIlse->size());
+    printf("muIsGoodLooseMuonNew: %ld\n", muIsGoodLooseMuonNew->size());
+    printf("muIsGoodLooseMuon: %ld\n", muIsGoodLooseMuon->size());
+    printf("muIsGoodTightMuon: %ld\n", muIsGoodTightMuon->size());
+    printf("muIsPatLooseMuon: %ld\n", muIsPatLooseMuon->size());
+    printf("muIsPatTightMuon: %ld\n", muIsPatTightMuon->size());
+    printf("muIsPatSoftMuon: %ld\n", muIsPatSoftMuon->size());
+    printf("muIsPatMediumMuon: %ld\n", muIsPatMediumMuon->size());
+    printf("muIsJpsiTrigMatch: %ld\n", muIsJpsiTrigMatch->size());
+    printf("muIsUpsTrigMatch: %ld\n", muIsUpsTrigMatch->size());
+    printf("muIsJpsiFilterMatch: %ld\n", muIsJpsiFilterMatch->size());
+    printf("muIsUpsFilterMatch: %ld\n", muIsUpsFilterMatch->size());
+    printf("muMVAMuonID: %ld\n", muMVAMuonID->size());
+    printf("musegmentCompatibility: %ld\n", musegmentCompatibility->size());
+    printf("mupulldXdZ_pos_noArb: %ld\n", mupulldXdZ_pos_noArb->size());
+    printf("mupulldYdZ_pos_noArb: %ld\n", mupulldYdZ_pos_noArb->size());
+    printf("mupulldXdZ_pos_ArbDef: %ld\n", mupulldXdZ_pos_ArbDef->size());
+    printf("mupulldYdZ_pos_ArbDef: %ld\n", mupulldYdZ_pos_ArbDef->size());
+    printf("mupulldXdZ_pos_ArbST: %ld\n", mupulldXdZ_pos_ArbST->size());
+    printf("mupulldYdZ_pos_ArbST: %ld\n", mupulldYdZ_pos_ArbST->size());
+    printf("mupulldXdZ_pos_noArb_any: %ld\n", mupulldXdZ_pos_noArb_any->size());
+    printf("mupulldYdZ_pos_noArb_any: %ld\n", mupulldYdZ_pos_noArb_any->size());
+    printf("Jpsi_cand_mass_p4: %ld\n", Jpsi_cand_mass_p4->size());
+    printf("Jpsi_cand_mass_fit: %ld\n", Jpsi_cand_mass_fit->size());
+    printf("Ups_cand_mass_p4: %ld\n", Ups_cand_mass_p4->size());
+    printf("Ups_cand_mass_fit: %ld\n", Ups_cand_mass_fit->size());
+    printf("Jpsi_1_mass: %ld\n", Jpsi_1_mass->size());
+    for (auto cur_Jpsi_1_mass: *Jpsi_1_mass) printf("%f ", cur_Jpsi_1_mass);
+    printf("\n");
+    printf("Jpsi_1_massErr: %ld\n", Jpsi_1_massErr->size());
+    for (auto cur_Jpsi_1_massErr: *Jpsi_1_massErr) printf("%f ", cur_Jpsi_1_massErr);
+    printf("\n");
+    printf("Jpsi_1_massDiff: %ld\n", Jpsi_1_massDiff->size());
+    for (auto cur_Jpsi_1_massDiff: *Jpsi_1_massDiff) printf("%f ", cur_Jpsi_1_massDiff);
+    printf("\n");
+    printf("Jpsi_1_ctau: %ld\n", Jpsi_1_ctau->size());
+    for (auto cur_Jpsi_1_ctau: *Jpsi_1_ctau) printf("%f ", cur_Jpsi_1_ctau);
+    printf("\n");
+    printf("Jpsi_1_ctauErr: %ld\n", Jpsi_1_ctauErr->size());
+    for (auto cur_Jpsi_1_ctauErr: *Jpsi_1_ctauErr) printf("%f ", cur_Jpsi_1_ctauErr);
+    printf("\n");
+    printf("Jpsi_1_Chi2: %ld\n", Jpsi_1_Chi2->size());
+    for (auto cur_Jpsi_1_Chi2: *Jpsi_1_Chi2) printf("%f ", cur_Jpsi_1_Chi2);
+    printf("\n");
+    printf("Jpsi_1_ndof: %ld\n", Jpsi_1_ndof->size());
+    for (auto cur_Jpsi_1_ndof: *Jpsi_1_ndof) printf("%f ", cur_Jpsi_1_ndof);
+    printf("\n");
+    printf("Jpsi_1_VtxProb: %ld\n", Jpsi_1_VtxProb->size());
+    for (auto cur_Jpsi_1_VtxProb: *Jpsi_1_VtxProb) printf("%f ", cur_Jpsi_1_VtxProb);
+    printf("\n");
+    printf("Jpsi_1_px: %ld\n", Jpsi_1_px->size());
+    for (auto cur_Jpsi_1_px: *Jpsi_1_px) printf("%f ", cur_Jpsi_1_px);
+    printf("\n");
+    printf("Jpsi_1_py: %ld\n", Jpsi_1_py->size());
+    for (auto cur_Jpsi_1_py: *Jpsi_1_py) printf("%f ", cur_Jpsi_1_py);
+    printf("\n");
+    printf("Jpsi_1_pz: %ld\n", Jpsi_1_pz->size());
+    for (auto cur_Jpsi_1_pz: *Jpsi_1_pz) printf("%f ", cur_Jpsi_1_pz);
+    printf("\n");
+    printf("Jpsi_1_phi: %ld\n", Jpsi_1_phi->size());
+    for (auto cur_Jpsi_1_phi: *Jpsi_1_phi) printf("%f ", cur_Jpsi_1_phi);
+    printf("\n");
+    printf("Jpsi_1_eta: %ld\n", Jpsi_1_eta->size());
+    for (auto cur_Jpsi_1_eta: *Jpsi_1_eta) printf("%f ", cur_Jpsi_1_eta);
+    printf("\n");
+    printf("Jpsi_1_pt: %ld\n", Jpsi_1_pt->size());
+    for (auto cur_Jpsi_1_pt: *Jpsi_1_pt) printf("%f ", cur_Jpsi_1_pt);
+    printf("\n");
+    printf("Jpsi_1_mu_1_Idx: %ld\n", Jpsi_1_mu_1_Idx->size());
+    for (auto cur_Jpsi_1_mu_1_Idx: *Jpsi_1_mu_1_Idx) printf("%f ", cur_Jpsi_1_mu_1_Idx);
+    printf("\n");
+    printf("Jpsi_1_mu_2_Idx: %ld\n", Jpsi_1_mu_2_Idx->size());
+    for (auto cur_Jpsi_1_mu_2_Idx: *Jpsi_1_mu_2_Idx) printf("%f ", cur_Jpsi_1_mu_2_Idx);
+    printf("\n");
+    printf("Jpsi_2_mass: %ld\n", Jpsi_2_mass->size());
+    for (auto cur_Jpsi_2_mass: *Jpsi_2_mass) printf("%f ", cur_Jpsi_2_mass);
+    printf("\n");
+    printf("Jpsi_2_massErr: %ld\n", Jpsi_2_massErr->size());
+    for (auto cur_Jpsi_2_massErr: *Jpsi_2_massErr) printf("%f ", cur_Jpsi_2_massErr);
+    printf("\n");
+    printf("Jpsi_2_massDiff: %ld\n", Jpsi_2_massDiff->size());
+    for (auto cur_Jpsi_2_massDiff: *Jpsi_2_massDiff) printf("%f ", cur_Jpsi_2_massDiff);
+    printf("\n");
+    printf("Jpsi_2_ctau: %ld\n", Jpsi_2_ctau->size());
+    for (auto cur_Jpsi_2_ctau: *Jpsi_2_ctau) printf("%f ", cur_Jpsi_2_ctau);
+    printf("\n");
+    printf("Jpsi_2_ctauErr: %ld\n", Jpsi_2_ctauErr->size());
+    for (auto cur_Jpsi_2_ctauErr: *Jpsi_2_ctauErr) printf("%f ", cur_Jpsi_2_ctauErr);
+    printf("\n");
+    printf("Jpsi_2_Chi2: %ld\n", Jpsi_2_Chi2->size());
+    for (auto cur_Jpsi_2_Chi2: *Jpsi_2_Chi2) printf("%f ", cur_Jpsi_2_Chi2);
+    printf("\n");
+    printf("Jpsi_2_ndof: %ld\n", Jpsi_2_ndof->size());
+    for (auto cur_Jpsi_2_ndof: *Jpsi_2_ndof) printf("%f ", cur_Jpsi_2_ndof);
+    printf("\n");
+    printf("Jpsi_2_VtxProb: %ld\n", Jpsi_2_VtxProb->size());
+    for (auto cur_Jpsi_2_VtxProb: *Jpsi_2_VtxProb) printf("%f ", cur_Jpsi_2_VtxProb);
+    printf("\n");
+    printf("Jpsi_2_px: %ld\n", Jpsi_2_px->size());
+    for (auto cur_Jpsi_2_px: *Jpsi_2_px) printf("%f ", cur_Jpsi_2_px);
+    printf("\n");
+    printf("Jpsi_2_py: %ld\n", Jpsi_2_py->size());
+    for (auto cur_Jpsi_2_py: *Jpsi_2_py) printf("%f ", cur_Jpsi_2_py);
+    printf("\n");
+    printf("Jpsi_2_pz: %ld\n", Jpsi_2_pz->size());
+    for (auto cur_Jpsi_2_pz: *Jpsi_2_pz) printf("%f ", cur_Jpsi_2_pz);
+    printf("\n");
+    printf("Jpsi_2_phi: %ld\n", Jpsi_2_phi->size());
+    for (auto cur_Jpsi_2_phi: *Jpsi_2_phi) printf("%f ", cur_Jpsi_2_phi);
+    printf("\n");
+    printf("Jpsi_2_eta: %ld\n", Jpsi_2_eta->size());
+    for (auto cur_Jpsi_2_eta: *Jpsi_2_eta) printf("%f ", cur_Jpsi_2_eta);
+    printf("\n");
+    printf("Jpsi_2_pt: %ld\n", Jpsi_2_pt->size());
+    for (auto cur_Jpsi_2_pt: *Jpsi_2_pt) printf("%f ", cur_Jpsi_2_pt);
+    printf("\n");
+    printf("Jpsi_2_mu_1_Idx: %ld\n", Jpsi_2_mu_1_Idx->size());
+    for (auto cur_Jpsi_2_mu_1_Idx: *Jpsi_2_mu_1_Idx) printf("%f ", cur_Jpsi_2_mu_1_Idx);
+    printf("\n");
+    printf("Jpsi_2_mu_2_Idx: %ld\n", Jpsi_2_mu_2_Idx->size());
+    for (auto cur_Jpsi_2_mu_2_Idx: *Jpsi_2_mu_2_Idx) printf("%f ", cur_Jpsi_2_mu_2_Idx);
+    printf("\n");
+    printf("Ups_mass: %ld\n", Ups_mass->size());
+    for (auto cur_Ups_mass: *Ups_mass) printf("%f ", cur_Ups_mass);
+    printf("\n");
+    printf("Ups_massErr: %ld\n", Ups_massErr->size());
+    for (auto cur_Ups_massErr: *Ups_massErr) printf("%f ", cur_Ups_massErr);
+    printf("\n");
+    printf("Ups_massDiff: %ld\n", Ups_massDiff->size());
+    for (auto cur_Ups_massDiff: *Ups_massDiff) printf("%f ", cur_Ups_massDiff);
+    printf("\n");
+    printf("Ups_Chi2: %ld\n", Ups_Chi2->size());
+    for (auto cur_Ups_Chi2: *Ups_Chi2) printf("%f ", cur_Ups_Chi2);
+    printf("\n");
+    printf("Ups_ndof: %ld\n", Ups_ndof->size());
+    for (auto cur_Ups_ndof: *Ups_ndof) printf("%f ", cur_Ups_ndof);
+    printf("\n");
+    printf("Ups_VtxProb: %ld\n", Ups_VtxProb->size());
+    for (auto cur_Ups_VtxProb: *Ups_VtxProb) printf("%f ", cur_Ups_VtxProb);
+    printf("\n");
+    printf("Ups_px: %ld\n", Ups_px->size());
+    for (auto cur_Ups_px: *Ups_px) printf("%f ", cur_Ups_px);
+    printf("\n");
+    printf("Ups_py: %ld\n", Ups_py->size());
+    for (auto cur_Ups_py: *Ups_py) printf("%f ", cur_Ups_py);
+    printf("\n");
+    printf("Ups_pz: %ld\n", Ups_pz->size());
+    for (auto cur_Ups_pz: *Ups_pz) printf("%f ", cur_Ups_pz);
+    printf("\n");
+    printf("Ups_phi: %ld\n", Ups_phi->size());
+    for (auto cur_Ups_phi: *Ups_phi) printf("%f ", cur_Ups_phi);
+    printf("\n");
+    printf("Ups_eta: %ld\n", Ups_eta->size());
+    for (auto cur_Ups_eta: *Ups_eta) printf("%f ", cur_Ups_eta);
+    printf("\n");
+    printf("Ups_pt: %ld\n", Ups_pt->size());
+    for (auto cur_Ups_pt: *Ups_pt) printf("%f ", cur_Ups_pt);
+    printf("\n");
+    printf("Ups_mu_1_Idx: %ld\n", Ups_mu_1_Idx->size());
+    for (auto cur_Ups_mu_1_Idx: *Ups_mu_1_Idx) printf("%f ", cur_Ups_mu_1_Idx);
+    printf("\n");
+    printf("Ups_mu_2_Idx: %ld\n", Ups_mu_2_Idx->size());
+    for (auto cur_Ups_mu_2_Idx: *Ups_mu_2_Idx) printf("%f ", cur_Ups_mu_2_Idx);
+    printf("\n");
+    printf("Pri_mass: %ld\n", Pri_mass->size());
+    for (auto cur_Pri_mass: *Pri_mass) printf("%f ", cur_Pri_mass);
+    printf("\n");
+    printf("Pri_massErr: %ld\n", Pri_massErr->size());
+    for (auto cur_Pri_massErr: *Pri_massErr) printf("%f ", cur_Pri_massErr);
+    printf("\n");
+    printf("Pri_ctau: %ld\n", Pri_ctau->size());
+    for (auto cur_Pri_ctau: *Pri_ctau) printf("%f ", cur_Pri_ctau);
+    printf("\n");
+    printf("Pri_ctauErr: %ld\n", Pri_ctauErr->size());
+    for (auto cur_Pri_ctauErr: *Pri_ctauErr) printf("%f ", cur_Pri_ctauErr);
+    printf("\n");
+    printf("Pri_Chi2: %ld\n", Pri_Chi2->size());
+    for (auto cur_Pri_Chi2: *Pri_Chi2) printf("%f ", cur_Pri_Chi2);
+    printf("\n");
+    printf("Pri_ndof: %ld\n", Pri_ndof->size());
+    for (auto cur_Pri_ndof: *Pri_ndof) printf("%f ", cur_Pri_ndof);
+    printf("\n");
+    printf("Pri_VtxProb: %ld\n", Pri_VtxProb->size());
+    for (auto cur_Pri_VtxProb: *Pri_VtxProb) printf("%f ", cur_Pri_VtxProb);
+    printf("\n");
+    printf("Pri_px: %ld\n", Pri_px->size());
+    for (auto cur_Pri_px: *Pri_px) printf("%f ", cur_Pri_px);
+    printf("\n");
+    printf("Pri_py: %ld\n", Pri_py->size());
+    for (auto cur_Pri_py: *Pri_py) printf("%f ", cur_Pri_py);
+    printf("\n");
+    printf("Pri_pz: %ld\n", Pri_pz->size());
+    for (auto cur_Pri_pz: *Pri_pz) printf("%f ", cur_Pri_pz);
+    printf("\n");
+    printf("Pri_phi: %ld\n", Pri_phi->size());
+    for (auto cur_Pri_phi: *Pri_phi) printf("%f ", cur_Pri_phi);
+    printf("\n");
+    printf("Pri_eta: %ld\n", Pri_eta->size());
+    for (auto cur_Pri_eta: *Pri_eta) printf("%f ", cur_Pri_eta);
+    printf("\n");
+    printf("Pri_pt: %ld\n", Pri_pt->size());
+    for (auto cur_Pri_pt: *Pri_pt) printf("%f ", cur_Pri_pt);
+    printf("\n");
+}
+
+void MultiLepPAT::Relink(){
+      trigRes   = new std::vector<unsigned int>; 
+      trigNames = new std::vector<std::string>; 
+      L1TT      = new std::vector<unsigned int>; 
+      MatchJpsiTrigNames = new std::vector<std::string>; 
+      MatchUpsTrigNames  = new std::vector<std::string>;
+
+	  PriVtxXCorrX = new std::vector<float>; PriVtxXCorrY = new std::vector<float>; PriVtxXCorrZ = new std::vector<float>;
+	  PriVtxXCorrEX = new std::vector<double>;
+      PriVtxXCorrEY = new std::vector<double>;
+      PriVtxXCorrEZ = new std::vector<double>;
+      PriVtxXCorrC2 = new std::vector<float>; PriVtxXCorrCL = new std::vector<float>;
+
+	  muPx = new std::vector<float>; muPy = new std::vector<float>; muPz = new std::vector<float>; muD0 = new std::vector<float>; muD0E = new std::vector<float>; muDz = new std::vector<float>; muChi2 = new std::vector<float>; muGlChi2 = new std::vector<float>; mufHits = new std::vector<float>;
+	  muFirstBarrel = new std::vector<bool>;
+      muFirstEndCap = new std::vector<bool>;
+      muDzVtx = new std::vector<float>; 
+      muDxyVtx = new std::vector<float>;
+	  muNDF         = new std::vector<int>;
+      muGlNDF       = new std::vector<int>;
+      muPhits       = new std::vector<int>; 
+      muShits       = new std::vector<int>; 
+      muGlMuHits    = new std::vector<int>; 
+      muType        = new std::vector<int>; 
+      muQual        = new std::vector<int>;
+	  muTrack       = new std::vector<int>; muCharge = new std::vector<float>; muIsoratio = new std::vector<float>;
+      muIsGoodLooseMuon             = new std::vector<int>; 
+      muIsGoodLooseMuonNew          = new std::vector<int>;
+	  muIsGoodSoftMuonNewIlse       = new std::vector<int>;
+      muIsGoodSoftMuonNewIlseMod    = new std::vector<int>; 
+      muIsGoodTightMuon             = new std::vector<int>; 
+      muIsJpsiTrigMatch             = new std::vector<int>; 
+      muIsUpsTrigMatch              = new std::vector<int>; 
+      munMatchedSeg                 = new std::vector<int>;
+      muIsJpsiFilterMatch           = new std::vector<int>; 
+      muIsUpsFilterMatch            = new std::vector<int>;
+	  muIsPatLooseMuon              = new std::vector<int>; 
+      muIsPatTightMuon              = new std::vector<int>; 
+      muIsPatSoftMuon               = new std::vector<int>; 
+      muIsPatMediumMuon             = new std::vector<int>;
+
+	  muMVAMuonID = new std::vector<float>; musegmentCompatibility = new std::vector<float>;
+	  mupulldXdZ_pos_noArb = new std::vector<float>; mupulldYdZ_pos_noArb = new std::vector<float>;
+	  mupulldXdZ_pos_ArbDef = new std::vector<float>; mupulldYdZ_pos_ArbDef = new std::vector<float>;
+	  mupulldXdZ_pos_ArbST = new std::vector<float>; mupulldYdZ_pos_ArbST = new std::vector<float>;
+	  mupulldXdZ_pos_noArb_any = new std::vector<float>; mupulldYdZ_pos_noArb_any = new std::vector<float>;
+
+      Jpsi_cand_mass_p4 = new std::vector<float>; Jpsi_cand_mass_fit = new std::vector<float>;
+       Ups_cand_mass_p4 = new std::vector<float>;  Ups_cand_mass_fit = new std::vector<float>;
+
+      Jpsi_1_mu_1_Idx = new std::vector<float>; Jpsi_1_mu_2_Idx = new std::vector<float>;
+      Jpsi_2_mu_1_Idx = new std::vector<float>; Jpsi_2_mu_2_Idx = new std::vector<float>;
+	     Ups_mu_1_Idx = new std::vector<float>;    Ups_mu_2_Idx = new std::vector<float>;
+
+      Jpsi_1_mass = new std::vector<float>; Jpsi_1_massErr = new std::vector<float>; Jpsi_1_massDiff = new std::vector<float>;
+      Jpsi_2_mass = new std::vector<float>; Jpsi_2_massErr = new std::vector<float>; Jpsi_2_massDiff = new std::vector<float>;
+         Ups_mass = new std::vector<float>;    Ups_massErr = new std::vector<float>;    Ups_massDiff = new std::vector<float>;
+
+      Jpsi_1_ctau = new std::vector<float>; Jpsi_1_ctauErr = new std::vector<float>; Jpsi_1_Chi2 = new std::vector<float>; Jpsi_1_ndof = new std::vector<float>; Jpsi_1_VtxProb = new std::vector<float>;
+      Jpsi_2_ctau = new std::vector<float>; Jpsi_2_ctauErr = new std::vector<float>; Jpsi_2_Chi2 = new std::vector<float>; Jpsi_2_ndof = new std::vector<float>; Jpsi_2_VtxProb = new std::vector<float>;
+                                            Ups_Chi2 = new std::vector<float>;    Ups_ndof = new std::vector<float>;    Ups_VtxProb = new std::vector<float>;
+      
+      Jpsi_1_phi = new std::vector<float>; Jpsi_1_eta = new std::vector<float>; Jpsi_1_pt = new std::vector<float>;
+      Jpsi_2_phi = new std::vector<float>; Jpsi_2_eta = new std::vector<float>; Jpsi_2_pt = new std::vector<float>;
+         Ups_phi = new std::vector<float>;    Ups_eta = new std::vector<float>;    Ups_pt = new std::vector<float>;
+
+      Jpsi_1_px = new std::vector<float>; Jpsi_1_py = new std::vector<float>; Jpsi_1_pz = new std::vector<float>;
+      Jpsi_2_px = new std::vector<float>; Jpsi_2_py = new std::vector<float>; Jpsi_2_pz = new std::vector<float>;
+         Ups_px = new std::vector<float>;    Ups_py = new std::vector<float>;    Ups_pz = new std::vector<float>;
+      
+         Pri_mass = new std::vector<float>;  Pri_massErr = new std::vector<float>;
+         Pri_ctau = new std::vector<float>;  Pri_ctauErr = new std::vector<float>; Pri_Chi2 = new std::vector<float>; Pri_ndof = new std::vector<float>; Pri_VtxProb = new std::vector<float>;
+         Pri_px = new std::vector<float>;    Pri_py = new std::vector<float>;    Pri_pz = new std::vector<float>; 
+         Pri_phi = new std::vector<float>;   Pri_eta = new std::vector<float>;   Pri_pt = new std::vector<float>;
+
+	  // doMC
+    if(doMC){
+	  MC_X_py = new std::vector<float>;
+	  MC_X_pz = new std::vector<float>;
+	  MC_X_mass = new std::vector<float>;
+	  MC_Dau_Jpsipx = new std::vector<float>;
+	  MC_Dau_Jpsipy = new std::vector<float>;
+	  MC_Dau_Jpsipz = new std::vector<float>;
+	  MC_Dau_Jpsimass = new std::vector<float>;
+	  MC_Dau_psi2spx = new std::vector<float>;
+	  MC_Dau_psi2spy = new std::vector<float>;
+	  MC_Dau_psi2spz = new std::vector<float>;
+	  MC_Dau_psi2smass = new std::vector<float>;
+	  MC_Granddau_mu1px = new std::vector<float>;
+	  MC_Granddau_mu1py = new std::vector<float>;
+	  MC_Granddau_mu1pz = new std::vector<float>;
+	  MC_Granddau_mu2px = new std::vector<float>;
+	  MC_Granddau_mu2py = new std::vector<float>;
+	  MC_Granddau_mu2pz = new std::vector<float>;
+	  MC_Granddau_Jpsipx = new std::vector<float>;
+	  MC_Granddau_Jpsipy = new std::vector<float>;
+	  MC_Granddau_Jpsipz = new std::vector<float>;
+	  MC_Granddau_Jpsimass = new std::vector<float>;
+	  MC_Granddau_pi1px = new std::vector<float>;
+	  MC_Granddau_pi1py = new std::vector<float>;
+	  MC_Granddau_pi1pz = new std::vector<float>;
+	  MC_Granddau_pi2px = new std::vector<float>;
+	  MC_Granddau_pi2py = new std::vector<float>;
+	  MC_Granddau_pi2pz = new std::vector<float>;
+	  MC_Grandgranddau_mu3px = new std::vector<float>;
+	  MC_Grandgranddau_mu3py = new std::vector<float>;
+	  MC_Grandgranddau_mu3pz = new std::vector<float>;
+	  MC_Grandgranddau_mu4px = new std::vector<float>;
+	  MC_Grandgranddau_mu4py = new std::vector<float>;
+	  MC_Grandgranddau_mu4pz = new std::vector<float>;
+
+	  MC_X_chg                  = new std::vector<int>;
+	  MC_Dau_JpsipdgId          = new std::vector<int>;
+	  MC_Dau_psi2spdgId         = new std::vector<int>;
+	  MC_Granddau_mu1pdgId      = new std::vector<int>;
+	  MC_Granddau_mu2pdgId      = new std::vector<int>;
+	  MC_Granddau_JpsipdgId     = new std::vector<int>;
+	  MC_Granddau_pi1pdgId      = new std::vector<int>;
+	  MC_Granddau_pi2pdgId      = new std::vector<int>;
+	  MC_Grandgranddau_mu3pdgId = new std::vector<int>;
+	  MC_Grandgranddau_mu4pdgId = new std::vector<int>;
+    }
+}
 
 // ------------ method called once each job just after ending the event loop  ------------
 void MultiLepPAT::endJob()

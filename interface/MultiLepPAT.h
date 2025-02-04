@@ -209,6 +209,8 @@ private:
                              double arg_massDiff_Jpsi_2, double arg_massErr_Jpsi_2,
                              double arg_massDiff_Ups,    double arg_massErr_Ups   );
 
+    void DisplayTempBranchInfo() const;
+    void Relink();
     
     // Member data
 
@@ -342,7 +344,6 @@ private:
                      *Ups_mu_1_Idx,    *Ups_mu_2_Idx;
 
     // Reconstructed Jpsi and Upsilon.
-    // Note: Used "vector<T>* a, b" instead of "vector<T> *a, *b"
     vector<float> *Jpsi_1_mass, *Jpsi_1_massErr, *Jpsi_1_massDiff,
                   *Jpsi_2_mass, *Jpsi_2_massErr, *Jpsi_2_massDiff,
                      *Ups_mass,    *Ups_massErr,    *Ups_massDiff ;
