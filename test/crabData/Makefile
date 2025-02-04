@@ -10,9 +10,10 @@
 all: submit_2022CD.sh submit_2022E.sh submit_2022FG.sh submit_2023.sh submit_2024.sh
 
 # For each era, use corresponding CMSSW, crab config template and data list to create crab config file.
-submit_%.sh: crab3_template_%.py RunDatalist_%.txt ../runMultiLepPAT_dataRun3_miniAOD_Run%.py
+submit_%.sh: crab3_template_%.py RunDatalist_%.txt ../runMultiLepPAT_dataRun3_miniAOD_Run%.py registerData.sh
 	@echo "Creating crab config file for era $*"
 	@./registerData.sh -l RunDatalist_$*.txt -t crab3_template_$*.py -s $@
+	@chmod +x $@
 
 # Clean up the crab config files
 clean:

@@ -52,6 +52,6 @@ do
     > ${fileName}_${tag}.py
 	#mv ${fileName}_${tag}.py result/
     # Produce a shell script to submit the crab jobs
-    echo "crab submit -c ${fileName}_${tag}.py" >> ${scriptName}
+    echo "crab submit -c ${fileName}_${tag}.py &" >> ${scriptName}
 done
 
