@@ -14,7 +14,6 @@ submit_%.sh: crab3_template_%.py RunDatalist_%.txt ../runMultiLepPAT_dataRun3_mi
 	@echo "Creating crab config file for era $*"
 	@./registerData.sh -l RunDatalist_$*.txt -t crab3_template_$*.py -s $@
 	@chmod +x $@
-
 # Clean up the crab config files
 clean:
 	@rm -f submit_*.sh
