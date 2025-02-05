@@ -9,10 +9,11 @@ files='crab_crab3_*_*'
 	do	
 		toresubmit=0
 		result=$(echo $rows | grep 'MINIAOD')
+		to_resubmit=0
 		if [[ $result != '' ]]
 		then
 			i=$rows
-			#echo -e "\033[32m $i \033[0m"
+			echo -e "Checking \033[32m $i \033[0m"
 		fi
 		result1=$(echo $rows | grep '8001')
 		if [[ $result1 != '' ]]
