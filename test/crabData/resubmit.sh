@@ -1,7 +1,7 @@
 #!/bin/bash
-files='crab_crab3_*_*_MINIAOD'
-#for i in $files
-#do
+files='crab_crab3_6_*'
+for i in $files
+do
 	#echo -e "\033[32m $i \033[0m"
 	#crab status $i | sed -n -e '/jobs failed/p' > tmp_report.out
 	cat report.out > tmp_report.out
@@ -12,7 +12,7 @@ files='crab_crab3_*_*_MINIAOD'
 		if [[ $result != '' ]]
 		then
 			i=$rows
-			#echo -e "\033[32m $i \033[0m"
+			echo -e "Checking \033[32m $i \033[0m"
 		fi
 		result1=$(echo $rows | grep '8001')
 		if [[ $result1 != '' ]]
@@ -56,4 +56,4 @@ files='crab_crab3_*_*_MINIAOD'
 		fi
 	done 
 	rm -f tmp_report.out
-#done
+done
