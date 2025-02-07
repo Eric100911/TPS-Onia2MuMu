@@ -826,25 +826,20 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
                                                            chi2, ndof, muMassSigma) );
             transMuPairId.push_back(iMuon2 - thePATMuonHandle->begin());
             // Judging with vertex fitting.
-            if(!particlesToVtx(transMuonPair)){
-                continue;
-            }
             // Passing all the checks, store the muon pair as pairs of RefCountedKinematicParticle.
-            if(isJpsiMuPair){
+            if(isJpsiMuPair&&particlesToVtx(transMuonPair)){
                 muPairCand_Jpsi.push_back(
                     std::make_pair(transMuonPair, transMuPairId) );
             }
-            if(isUpsMuPair){
+            if(isUpsMuPair&&particlesToVtx(transMuonPair)){
                 muPairCand_Ups.push_back(
                     std::make_pair(transMuonPair, transMuPairId) );
             }
             // Clear the transient muon pair for the next pair.
             transMuonPair.pop_back();
             transMuPairId.pop_back();
-            transMuPairId.pop_back();
         }
         transMuonPair.pop_back();
-        transMuPairId.pop_back();
         transMuPairId.pop_back();
     }
 
@@ -881,6 +876,7 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
     RefCountedKinematicVertex   Jpsi_1_Vtx_noMC, Phi_Vtx_noMC, Ups_Vtx_noMC, Pri_Vtx_noMC;
     KinematicParameters         Jpsi_1_Para,     Phi_Para,     Ups_Para,     Pri_Para;
     std::vector< RefCountedKinematicParticle >  interOnia;
+	std::vector< RefCountedKinematicParticle >  interOniaJU;
 
     // Markers for fitting. Only marks if a result is constructed
     bool isValidJpsi_1, isValidPhi, isValidUps, isValidPri;
@@ -989,7 +985,7 @@ for(std::vector<edm::View<pat::PackedCandidate>::const_iterator>::const_iterator
 							PhiKKParticles.push_back(PhiKaKaFactory.particle(trackTT2, kaonMass, chi, ndf, kaonMassSigma));
 							isValidPhi    = particlesToVtx(vtxFitTree_Phi, PhiKKParticles, "final Phi");
 							if(isValidPhi)extractFitRes(vtxFitTree_Phi, Phi_Fit_noMC, Phi_Vtx_noMC, tmp_Phi_massErr);
-							//std::cout<<"Phikaka tested"<<std::endl;
+							std::cout<<"Phikaka tested"<<std::endl;
 						    for(auto muPair_Jpsi_1  = muPairCand_Jpsi.begin(); 
 						             muPair_Jpsi_1 != muPairCand_Jpsi.end();  muPair_Jpsi_1++){
 						        for(auto muPair_Ups  = muPairCand_Ups.begin(); 
@@ -998,14 +994,16 @@ for(std::vector<edm::View<pat::PackedCandidate>::const_iterator>::const_iterator
 						            if(isOverlapPair(*muPair_Jpsi_1, *muPair_Ups)){
 						                 continue;
 						            }
-										//std::cout<<"overlap tested"<<std::endl;
+										std::cout<<"overlap tested"<<std::endl;
 						                // Initialize the marker for primary vertex
 						                isValidPri = false;
 						                // Start constructing the fit tree.
 						                // Use particlesToVtx() to fit the quarkonia once more.
 						                isValidJpsi_1 = particlesToVtx(vtxFitTree_Jpsi_1, muPair_Jpsi_1->first, "final Jpsi_1");
+										std::cout<<"tovtx1 tested"<<std::endl;
 										if(isValidJpsi_1)extractFitRes(vtxFitTree_Jpsi_1, Jpsi_1_Fit_noMC, Jpsi_1_Vtx_noMC, tmp_Jpsi_1_massErr);
 										isValidUps    = particlesToVtx(vtxFitTree_Ups,    muPair_Ups->first,    "final Ups");
+										std::cout<<"tovtx2 tested"<<std::endl;
 										if(isValidUps)extractFitRes(vtxFitTree_Ups,       Ups_Fit_noMC,    Ups_Vtx_noMC,    tmp_Ups_massErr);
 						                // Store the index of the muons.
 						                Jpsi_1_mu_1_Idx->push_back(muPair_Jpsi_1->second[0]);
@@ -1016,23 +1014,26 @@ for(std::vector<edm::View<pat::PackedCandidate>::const_iterator>::const_iterator
 						                Ups_mu_2_Idx->push_back(muPair_Ups->second[1]);
 										//std::cout<<"Idx tested"<<std::endl;
 						                // Check if all fit trees give non-null results.
+										std::cout<<"testing valid"<<std::endl;
 						                if(isValidJpsi_1 && isValidPhi && isValidUps){
 						                    // Extract the vertex and the particle parameters from valid results.
 						                    // Here, when an invalid fit is detected, the massErr is set to -9.
 											if(Phi_Fit_noMC->currentState().mass()>1.5||Phi_Fit_noMC->currentState().mass()<0.5){
 												isValidPhi=false;
-												//std::cout << "didn't pass mass test of phi " << std::endl;
+												std::cout << "didn't pass mass test of phi " << std::endl;
 											}
 						                    // Look for "Good Fit". Judge by the massErr.
 						                    if(tmp_Jpsi_1_massErr >= 0.0 && tmp_Phi_massErr >= 0.0 && tmp_Ups_massErr >= 0.0&& isValidPhi){
 						                        // Initialize the final fitting marker and the secondary particles.
 						                        interOnia.push_back(Jpsi_1_Fit_noMC);
+												interOniaJU.push_back(Jpsi_1_Fit_noMC);
 						                        interOnia.push_back(Phi_Fit_noMC);
 						                        interOnia.push_back(Ups_Fit_noMC);
+												interOniaJU.push_back(Ups_Fit_noMC);
 						                        // Fit the quarkonia to the same vertex
-						                        isValidPri = particlesToVtx(vtxFitTree_Pri, interOnia, "primary vertex");
+												if(particlesToVtx(interOniaJU))
+						                        isValidPri = particlesToVtx(vtxFitTree_Pri, interOnia, "primary vertex");//error
 									            interOnia.clear();
-												//std::cout<<"interOnia tested"<<std::endl;
 						                        //std::cout << "Found candidate" << std::endl;
 						                        //std::cout << "Jpsi_1: " << Jpsi_1_Fit_noMC->currentState().mass() << std::endl;
 						                        //std::cout << "Phi: " << Phi_Fit_noMC->currentState().mass() << std::endl;
@@ -1041,8 +1042,6 @@ for(std::vector<edm::View<pat::PackedCandidate>::const_iterator>::const_iterator
 						                }
 						                // Work with all fit results above. (Jpsi_1, Phi, Ups, Pri)
 						                // Primary vertex fitting comes first.
-
-						                //std::cout << "validPritested" << endl; //testing segmentation
 						                if(isValidPri){
 						                    // Extract the vertex and the particle parameters from valid results.
 						                    extractFitRes(vtxFitTree_Pri, Pri_Fit_noMC, Pri_Vtx_noMC, tmp_Pri_massErr);
@@ -1079,7 +1078,7 @@ for(std::vector<edm::View<pat::PackedCandidate>::const_iterator>::const_iterator
 						                    Pri_eta->push_back(-999);
 						                    Pri_pt->push_back(-999);
 						                }
-										 //std::cout << "Pri info stored" << endl; //testing segmentation
+										 std::cout << "Pri info stored" << endl; //testing segmentation
 						                // Then comes the secondary particles (quarkonia).
 						                if(isValidPri){
 											//std::cout<<"a"<<std::endl;
@@ -1129,7 +1128,7 @@ for(std::vector<edm::View<pat::PackedCandidate>::const_iterator>::const_iterator
 						                    Jpsi_1_eta->push_back(-9);
 						                    Jpsi_1_pt->push_back(-9);
 						                }
-										//std::cout << "Jpsi_1 info stored" << endl; //testing segmentation
+										std::cout << "Jpsi_1 info stored" << endl; //testing segmentation
 						                if(isValidPri){
 						                    getDynamics(Phi_Fit_noMC, tmp_pt, tmp_eta, tmp_phi);
 						                    Phi_mass->push_back(    Phi_Fit_noMC->currentState().mass());
@@ -1208,7 +1207,7 @@ for(std::vector<edm::View<pat::PackedCandidate>::const_iterator>::const_iterator
 						                    Ups_eta->push_back(-9);
 						                    Ups_pt->push_back(-9);
 						                }
-										//std::cout << "Ups info stored" << endl; //testing segmentation
+										std::cout << "Ups info stored" << endl; //testing segmentation
 						            }
 						        }
 							}
@@ -1595,18 +1594,23 @@ bool MultiLepPAT::particlesToVtx(const vector<RefCountedKinematicParticle>&  arg
 
 bool MultiLepPAT::particlesToVtx(const vector<RefCountedKinematicParticle>&  arg_FromParticles,
                                  const string&                               arg_Message){
-    KinematicParticleVertexFitter fitter;
+	KinematicParticleVertexFitter fitter;
     RefCountedKinematicTree vertexFitTree;
     bool fitError = false;
     try{
         vertexFitTree = fitter.fit(arg_FromParticles);
     }catch(...){
         fitError = true;
-        std::cout << "[Fit Error] " << arg_Message <<  std::endl;
+		std::cout << "[Fit Error] " << arg_Message <<  std::endl;
     }
     if (fitError || !vertexFitTree->isValid()){
         return false;
     }
+	RefCountedKinematicVertex vFit_vertex_noMC = vertexFitTree->currentDecayVertex();
+	double vtxprob = ChiSquaredProbability((double)(vFit_vertex_noMC->chiSquared()),(double)(vFit_vertex_noMC->degreesOfFreedom()));
+	if(vtxprob < 0.01){
+		return false;
+	}
     return true;
 }
 
@@ -1634,17 +1638,30 @@ bool MultiLepPAT::particlesToVtx(const vector<RefCountedKinematicParticle>&  arg
 bool MultiLepPAT::particlesToVtx(RefCountedKinematicTree&                    arg_VertexFitTree,
                                  const vector<RefCountedKinematicParticle>&  arg_FromParticles,
                                  const string&                               arg_Message){
-    KinematicParticleVertexFitter fitter;
+	KinematicParticleVertexFitter fitter;
+	std::cout<<"1"<<std::endl;
     bool fitError = false;
+	std::cout<<"2"<<std::endl;
     try{
         arg_VertexFitTree = fitter.fit(arg_FromParticles);
+		std::cout<<"3"<<std::endl;
     }catch(...){
         fitError = true;
-        std::cout << "[Fit Error] " << arg_Message <<  std::endl;
+		std::cout<<"4"<<std::endl;
+		std::cout << "[Fit Error] " << arg_Message <<  std::endl;
     }
+	std::cout<<"5"<<std::endl;
     if (fitError || !arg_VertexFitTree->isValid()){
         return false;
     }
+	std::cout<<"6"<<std::endl;
+	RefCountedKinematicVertex vFit_vertex_noMC = arg_VertexFitTree->currentDecayVertex();
+	std::cout<<"7"<<std::endl;
+	double vtxprob = ChiSquaredProbability((double)(vFit_vertex_noMC->chiSquared()),(double)(vFit_vertex_noMC->degreesOfFreedom()));
+	std::cout<<"8"<<std::endl;
+	if(vtxprob < 0.01){
+		return false;
+	}
     return true;
 }
 
