@@ -866,6 +866,11 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
             transMuonPair.push_back(muPairFactory.particle(transTrk1, muMass, chi2, ndof, muMassSigma));
             transMuPairId.push_back(iMuon1 - thePATMuonHandle->begin());
 
+            // Dynamics selection. Apply a eta cut of 2.5 here.
+            if(std::fabs(iMuon1->p4().eta()) < 2.5){
+                continue;
+            }
+
             // Next muon candidate.
             for(auto iMuon2  = iMuon1 + 1; 
                      iMuon2 != thePATMuonHandle->end(); ++iMuon2){
@@ -874,6 +879,10 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
                 try{
                     TrackRef muTrack2 = iMuon2->track();
                     if (muTrack2.isNull()){
+                        continue;
+                    }
+                    // Apply a eta cut of 2.5 here.
+                    if(std::fabs(iMuon1->p4().Eta()) < 2.5){
                         continue;
                     }
                     TransientTrack transTrk2(muTrack2, &(bFieldHandle));
@@ -886,6 +895,9 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
                     transMuPairId.push_back(iMuon2 - thePATMuonHandle->begin());
                     // Dynamics selection. A very crude selection.
                     // Involves more calculation and is therefore done after kinematics.
+                    if(std::fabs((iMuon1->p4() + iMuon2->p4()).eta()) < 2.5 ){
+                        continue;
+                    }
                     double muPairMassFromP4 = (iMuon1->p4() + iMuon2->p4()).mass();
                     #ifdef DISPLAY_DIMUON
                     double muPairMassFromFit;
