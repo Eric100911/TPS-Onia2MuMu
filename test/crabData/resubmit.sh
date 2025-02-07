@@ -54,7 +54,6 @@ files='crab_crab3_*_*'
 		if [[ $toresubmit -eq 1 ]]
 		then
 			crab --quiet resubmit --siteblacklist=T2_FR_GRIF,T2_US_Wisconsin $i
-		fi
 	done 
 	rm -f tmp_report.out
 #done
