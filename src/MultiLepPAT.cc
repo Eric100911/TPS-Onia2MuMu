@@ -41,6 +41,8 @@
 // user include files
 #include "../interface/MultiLepPAT.h"
 #include "../interface/VertexReProducer.h"
+#include <memory>
+#include <regex>
 
 #include "FWCore/Framework/interface/Frameworkfwd.h"
 #include "FWCore/Framework/interface/one/EDAnalyzer.h"
@@ -187,6 +189,7 @@ MultiLepPAT::MultiLepPAT(const edm::ParameterSet &iConfig)
 	  muIsGoodSoftMuonNewIlse(0), muIsGoodSoftMuonNewIlseMod(0), muIsGoodTightMuon(0), muIsJpsiTrigMatch(0), muIsUpsTrigMatch(0), munMatchedSeg(0),
 
 	  muIsPatLooseMuon(0), muIsPatTightMuon(0), muIsPatSoftMuon(0), muIsPatMediumMuon(0),
+	  muIsJpsiFilterMatch(0), muIsUpsFilterMatch(0),
 	  muUpsVrtxMatch(0), muL3TriggerMatch(0),
 
 	  muMVAMuonID(0), musegmentCompatibility(0),
@@ -194,11 +197,11 @@ MultiLepPAT::MultiLepPAT(const edm::ParameterSet &iConfig)
 	  mupulldXdZ_pos_ArbDef(0), mupulldYdZ_pos_ArbDef(0),
 	  mupulldXdZ_pos_ArbST(0), mupulldYdZ_pos_ArbST(0),
 	  mupulldXdZ_pos_noArb_any(0), mupulldYdZ_pos_noArb_any(0),
-      
-      // [J-U-P] Modify branches to store the original kaon tracks and the reconstructed phi.
+
+	  Jpsi_cand_mass_p4(0), Jpsi_cand_mass_fit(0),
 
       Jpsi_1_mu_1_Idx(0), Jpsi_1_mu_2_Idx(0),
-      Phi_ka_1_Idx(0), Phi_ka_2_Idx(0),
+      Phi_K_1_Idx(0), Phi_K_2_Idx(0),
 	     Ups_mu_1_Idx(0),    Ups_mu_2_Idx(0),
 
       Jpsi_1_mass(0), Jpsi_1_massErr(0), Jpsi_1_massDiff(0),
@@ -292,7 +295,7 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
 {
 	
 
-    // Load the MC results [Annotated by Eric Wang, 20240704]
+    std::cout<<"Load the MC results [Annotated by Eric Wang, 20240704]"<<std::endl;
 
 	TLorentzVector MC_mu1p4, MC_mu2p4, MC_mu3p4, MC_mu4p4, MC_pi1p4, MC_pi2p4;
 	if (doMC)
@@ -738,7 +741,7 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
 	// It takes a lot less memory out of the loop
 	KinematicConstraint *Jpsi_cs = new MassKinematicConstraint(myJpsiMass, myJpsiMassErr);
 	KinematicConstraint *Jpsi_cs34 = new MassKinematicConstraint(myJpsiMass, myJpsiMassErr);
-	double kaonPTcut = 0.25;
+	double kaonPTcut = 2;               //Feb 6 modify kaonPtcut
 	double kaonDRcut = 0.7;
 	double vtxProbPreCut = 1.0e-7;            
 
@@ -753,7 +756,7 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
     // [J-U-P] Will only need 4 muons.
 
     // Will be working reco from 3 pairs of muons. 
-	if (thePATMuonHandle->size() < 4||nonMuonKaonTrack.size()<2)//warning
+	if (thePATMuonHandle->size() < 4||nonMuonKaonTrack.size()<2)//warning  //Different from JJP
 	{
 		return;
 	}
@@ -942,8 +945,8 @@ for(std::vector<edm::View<pat::PackedCandidate>::const_iterator>::const_iterator
 							// MINIAOD begin
 							if (!iTrack2->hasTrackDetails() || iTrack2->charge() == 0)
 							{
-								// cout << "iTrack2->hasTrackDetails() = " << iTrack2->hasTrackDetails() << endl;
-								// cout << "iTrack2->charge() = " << iTrack2->charge() << endl;
+								 cout << "iTrack2->hasTrackDetails() = " << iTrack2->hasTrackDetails() << endl;
+								 cout << "iTrack2->charge() = " << iTrack2->charge() << endl;
 								continue;
 							}
 							if (iTrack2->fromPV() < 1 || abs(iTrack2->eta()) > 2.5)
@@ -1008,11 +1011,11 @@ for(std::vector<edm::View<pat::PackedCandidate>::const_iterator>::const_iterator
 						                // Store the index of the muons.
 						                Jpsi_1_mu_1_Idx->push_back(muPair_Jpsi_1->second[0]);
 						                Jpsi_1_mu_2_Idx->push_back(muPair_Jpsi_1->second[1]);
-										Phi_ka_1_Idx->push_back(std::distance(nonMuonKaonTrack.cbegin(),iTrack1ID));//warning
-										Phi_ka_2_Idx->push_back(std::distance(nonMuonKaonTrack.cbegin(),iTrack2ID));//warning
+										Phi_K_1_Idx->push_back(std::distance(nonMuonKaonTrack.cbegin(),iTrack1ID));//warning
+										Phi_K_2_Idx->push_back(std::distance(nonMuonKaonTrack.cbegin(),iTrack2ID));//warning
 						                Ups_mu_1_Idx->push_back(muPair_Ups->second[0]);
 						                Ups_mu_2_Idx->push_back(muPair_Ups->second[1]);
-										//std::cout<<"Idx tested"<<std::endl;
+										std::cout<<"Idx tested"<<std::endl;
 						                // Check if all fit trees give non-null results.
 										std::cout<<"testing valid"<<std::endl;
 						                if(isValidJpsi_1 && isValidPhi && isValidUps){
@@ -1027,22 +1030,24 @@ for(std::vector<edm::View<pat::PackedCandidate>::const_iterator>::const_iterator
 						                        // Initialize the final fitting marker and the secondary particles.
 						                        interOnia.push_back(Jpsi_1_Fit_noMC);
 												interOniaJU.push_back(Jpsi_1_Fit_noMC);
-						                        interOnia.push_back(Phi_Fit_noMC);
 						                        interOnia.push_back(Ups_Fit_noMC);
 												interOniaJU.push_back(Ups_Fit_noMC);
+												interOnia.push_back(Phi_Fit_noMC);
 						                        // Fit the quarkonia to the same vertex
 												if(particlesToVtx(interOniaJU))
 						                        isValidPri = particlesToVtx(vtxFitTree_Pri, interOnia, "primary vertex");//error
 									            interOnia.clear();
-						                        //std::cout << "Found candidate" << std::endl;
-						                        //std::cout << "Jpsi_1: " << Jpsi_1_Fit_noMC->currentState().mass() << std::endl;
-						                        //std::cout << "Phi: " << Phi_Fit_noMC->currentState().mass() << std::endl;
-						                        //std::cout << "Ups: " << Ups_Fit_noMC->currentState().mass() << std::endl;
+												interOniaJU.clear();
+						                        std::cout << "Found candidate" << std::endl;
+						                        std::cout << "Jpsi_1: " << Jpsi_1_Fit_noMC->currentState().mass() << std::endl;
+						                        std::cout << "Phi: " << Phi_Fit_noMC->currentState().mass() << std::endl;
+						                        std::cout << "Ups: " << Ups_Fit_noMC->currentState().mass() << std::endl;
 						                    }
 						                }
 						                // Work with all fit results above. (Jpsi_1, Phi, Ups, Pri)
 						                // Primary vertex fitting comes first.
 						                if(isValidPri){
+											std::cout << "isValidPri" << std::endl;
 						                    // Extract the vertex and the particle parameters from valid results.
 						                    extractFitRes(vtxFitTree_Pri, Pri_Fit_noMC, Pri_Vtx_noMC, tmp_Pri_massErr);
 						                    getDynamics(Pri_Fit_noMC, tmp_pt, tmp_eta, tmp_phi);
@@ -1060,44 +1065,24 @@ for(std::vector<edm::View<pat::PackedCandidate>::const_iterator>::const_iterator
 						                    Pri_pz->push_back(Pri_Fit_noMC->currentState().kinematicParameters().momentum().z());
 						                    Pri_phi->push_back(tmp_phi);
 						                    Pri_eta->push_back(tmp_eta);
-						                    Pri_pt->push_back(tmp_pt);
-						                }
-						                else{
-						                    // Store "error code" -999 for the primary vertex fitting.
-						                    Pri_mass->push_back(-999);
-						                    Pri_massErr->push_back(-999);
-						                    Pri_ctau->push_back(-999);
-						                    Pri_ctauErr->push_back(-999);
-						                    Pri_VtxProb->push_back(-999);
-						                    Pri_Chi2->push_back(-999);
-						                    Pri_ndof->push_back(-999);
-						                    Pri_px->push_back(-999);
-						                    Pri_py->push_back(-999);
-						                    Pri_pz->push_back(-999);
-						                    Pri_phi->push_back(-999);
-						                    Pri_eta->push_back(-999);
-						                    Pri_pt->push_back(-999);
-						                }
-										 std::cout << "Pri info stored" << endl; //testing segmentation
-						                // Then comes the secondary particles (quarkonia).
-						                if(isValidPri){
-											//std::cout<<"a"<<std::endl;
-											//std::cout<<"b"<<std::endl;
+						                	Pri_pt->push_back(tmp_pt);
+											std::cout<<"a"<<std::endl;
+											std::cout<<"b"<<std::endl;
 											getDynamics(Jpsi_1_Fit_noMC, tmp_pt, tmp_eta, tmp_phi);
 						                    Jpsi_1_mass->push_back(    Jpsi_1_Fit_noMC->currentState().mass());
-											//std::cout<<"c"<<std::endl;
+											std::cout<<"c"<<std::endl;
 						                    Jpsi_1_massDiff->push_back(Jpsi_1_Fit_noMC->currentState().mass() - myJpsiMass);
-											//std::cout<<"d"<<std::endl;
+											std::cout<<"d"<<std::endl;
 						                    Jpsi_1_massErr->push_back( tmp_Jpsi_1_massErr);
-											//std::cout << "1" << endl; //testing segmentation
+											std::cout << "1" << endl; //testing segmentation
 											if (Jpsi_1_Vtx_noMC == nullptr || Jpsi_1_Fit_noMC == nullptr) {
-						    				//std::cerr << "Null pointer detected!" << std::endl;//testing segmentation
+						    				std::cerr << "Null pointer detected!" << std::endl;//testing segmentation
 											}
-											//std::cout << "not null pointer" << endl; //testing segmentation
+											std::cout << "not null pointer" << endl; //testing segmentation
 						                    Jpsi_1_ctau->push_back(GetcTau(Jpsi_1_Vtx_noMC, Jpsi_1_Fit_noMC, theBeamSpotV));
-											//std::cout << "2" << endl; //testing segmentation
+											std::cout << "2" << endl; //testing segmentation
 						                    Jpsi_1_ctauErr->push_back(GetcTauErr(Jpsi_1_Vtx_noMC, Jpsi_1_Fit_noMC, theBeamSpotV));
-											//std::cout << "3" << endl; //testing segmentation
+											std::cout << "3" << endl; //testing segmentation
 						                    Jpsi_1_Chi2->push_back(double(Jpsi_1_Vtx_noMC->chiSquared()));
 						                    Jpsi_1_ndof->push_back(double(Jpsi_1_Vtx_noMC->degreesOfFreedom()));
 						                    Jpsi_1_VtxProb->push_back(ChiSquaredProbability((double)(Jpsi_1_Vtx_noMC->chiSquared()), 
@@ -1108,30 +1093,7 @@ for(std::vector<edm::View<pat::PackedCandidate>::const_iterator>::const_iterator
 						                    Jpsi_1_phi->push_back(tmp_pt);
 						                    Jpsi_1_eta->push_back(tmp_eta);
 						                    Jpsi_1_pt->push_back(tmp_pt);
-						                }
-						                else{
-										
-								// Store "error code" -9 for the secondary particles (quarkonia).
-
-						                    Jpsi_1_mass->push_back(-9);
-						                    Jpsi_1_massErr->push_back(-9);
-						                    Jpsi_1_massDiff->push_back(-9);
-						                    Jpsi_1_ctau->push_back(-9);
-						                    Jpsi_1_ctauErr->push_back(-9);
-						                    Jpsi_1_Chi2->push_back(-9);
-						                    Jpsi_1_ndof->push_back(-9);
-						                    Jpsi_1_VtxProb->push_back(-9);
-						                    Jpsi_1_px->push_back(-9);
-						                    Jpsi_1_py->push_back(-9);
-						                    Jpsi_1_pz->push_back(-9);
-						                    Jpsi_1_phi->push_back(-9);
-						                    Jpsi_1_eta->push_back(-9);
-						                    Jpsi_1_pt->push_back(-9);
-						                }
-										std::cout << "Jpsi_1 info stored" << endl; //testing segmentation
-						                if(isValidPri){
 						                    getDynamics(Phi_Fit_noMC, tmp_pt, tmp_eta, tmp_phi);
-						                    Phi_mass->push_back(    Phi_Fit_noMC->currentState().mass());
 						                    Phi_mass->push_back(    Phi_Fit_noMC->currentState().mass());
 						                    Phi_massDiff->push_back(Phi_Fit_noMC->currentState().mass() - myJpsiMass);
 						                    Phi_massErr->push_back( tmp_Phi_massErr);
@@ -1149,14 +1111,71 @@ for(std::vector<edm::View<pat::PackedCandidate>::const_iterator>::const_iterator
 						                    Phi_phi->push_back(tmp_pt);
 						                    Phi_eta->push_back(tmp_eta);
 						                    Phi_pt->push_back(tmp_pt);
-						                }
-						                // [TODO] Store the difference between fitted mass with std. mass.
-						                // [TODO] Store pT eta phi ctau and other kinematic parameters. "As much as possible"
-						                // [HINT] Only Jpsi ctau required. 
-						                // [HINT] DR may be useful in BKG suppression. (To deal with pile up. Do it later.)
-						                else{
-						                    // Store "error code" -9 for the secondary particles (quarkonia).
-						                    Phi_mass->push_back(-9);
+						                    getDynamics(Ups_Fit_noMC, tmp_pt, tmp_eta, tmp_phi);
+						                    Ups_mass->push_back(    Ups_Fit_noMC->currentState().mass());
+						                    Ups_massDiff->push_back(Ups_Fit_noMC->currentState().mass() - myUpsMass);
+						                    Ups_massErr->push_back( tmp_Ups_massErr);
+											Jpsi_1_ctau->push_back(GetcTau(Ups_Vtx_noMC, Ups_Fit_noMC, theBeamSpotV));
+											std::cout << "Ups_ctau: " << GetcTau(   Ups_Vtx_noMC, Ups_Fit_noMC, theBeamSpotV) << std::endl;
+											Jpsi_1_ctauErr->push_back(GetcTauErr(Ups_Vtx_noMC, Ups_Fit_noMC, theBeamSpotV));
+											std::cout << "Ups_ctauErr: " << GetcTauErr(   Ups_Vtx_noMC, Ups_Fit_noMC, theBeamSpotV) << std::endl;
+						                    Ups_Chi2->push_back(double(Ups_Vtx_noMC->chiSquared()));
+						                    Ups_ndof->push_back(double(Ups_Vtx_noMC->degreesOfFreedom()));
+						                    Ups_VtxProb->push_back(ChiSquaredProbability((double)(Ups_Vtx_noMC->chiSquared()), 
+						                                                                 (double)(Ups_Vtx_noMC->degreesOfFreedom())));
+						                    Ups_px->push_back(Ups_Fit_noMC->currentState().kinematicParameters().momentum().x());
+						                    Ups_py->push_back(Ups_Fit_noMC->currentState().kinematicParameters().momentum().y());
+						                    Ups_pz->push_back(Ups_Fit_noMC->currentState().kinematicParameters().momentum().z());
+						                    Ups_phi->push_back(tmp_pt);
+						                    Ups_eta->push_back(tmp_eta);
+						                    Ups_pt->push_back(tmp_pt);
+
+											Phi_K_1_px->push_back(iTrack1->px());
+                    						Phi_K_1_py->push_back(iTrack1->py());
+                    						Phi_K_1_pz->push_back(iTrack1->pz());
+                    						Phi_K_1_pt->push_back(iTrack1->pt());
+                    						Phi_K_1_eta->push_back(iTrack1->eta());
+                    						Phi_K_1_phi->push_back(iTrack1->phi());
+
+											// Kaon 2
+                    						Phi_K_2_px->push_back(iTrack2->px());
+                    						Phi_K_2_py->push_back(iTrack2->py());
+                    						Phi_K_2_pz->push_back(iTrack2->pz());
+                    						Phi_K_2_pt->push_back(iTrack2->pt());
+                    						Phi_K_2_eta->push_back(iTrack2->eta());
+                    						Phi_K_2_phi->push_back(iTrack2->phi());
+										}
+										else{
+						                    // Store "error code" -999 for the primary vertex fitting.
+											std::cout << "else"  << std::endl;
+						                    Pri_mass->push_back(-999);
+						                    Pri_massErr->push_back(-999);
+						                    Pri_ctau->push_back(-999);
+						                    Pri_ctauErr->push_back(-999);
+						                    Pri_VtxProb->push_back(-999);
+						                    Pri_Chi2->push_back(-999);
+						                    Pri_ndof->push_back(-999);
+						                    Pri_px->push_back(-999);
+						                    Pri_py->push_back(-999);
+						                    Pri_pz->push_back(-999);
+						                    Pri_phi->push_back(-999);
+						                    Pri_eta->push_back(-999);
+						                    Pri_pt->push_back(-999);
+											Jpsi_1_mass->push_back(-9);
+						                    Jpsi_1_massErr->push_back(-9);
+						                    Jpsi_1_massDiff->push_back(-9);
+						                    Jpsi_1_ctau->push_back(-9);
+						                    Jpsi_1_ctauErr->push_back(-9);
+						                    Jpsi_1_Chi2->push_back(-9);
+						                    Jpsi_1_ndof->push_back(-9);
+						                    Jpsi_1_VtxProb->push_back(-9);
+						                    Jpsi_1_px->push_back(-9);
+						                    Jpsi_1_py->push_back(-9);
+						                    Jpsi_1_pz->push_back(-9);
+						                    Jpsi_1_phi->push_back(-9);
+						                    Jpsi_1_eta->push_back(-9);
+						                    Jpsi_1_pt->push_back(-9);
+											Phi_mass->push_back(-9);
 						                    Phi_massErr->push_back(-9);
 						                    Phi_massDiff->push_back(-9);
 						                    Phi_ctau->push_back(-9);
@@ -1170,31 +1189,7 @@ for(std::vector<edm::View<pat::PackedCandidate>::const_iterator>::const_iterator
 						                    Phi_phi->push_back(-9);
 						                    Phi_eta->push_back(-9);
 						                    Phi_pt->push_back(-9);
-						                }
-										//std::cout << "Phi info stored" << endl; //testing segmentation
-						                if(isValidPri){
-						                    getDynamics(Ups_Fit_noMC, tmp_pt, tmp_eta, tmp_phi);
-						                    Ups_mass->push_back(    Ups_Fit_noMC->currentState().mass());
-						                    Ups_massDiff->push_back(Ups_Fit_noMC->currentState().mass() - myUpsMass);
-						                    Ups_massErr->push_back( tmp_Ups_massErr);
-											//Jpsi_1_ctau->push_back(GetcTau(Ups_Vtx_noMC, Ups_Fit_noMC, theBeamSpotV));
-											//std::cout << "Ups_ctau: " << GetcTau(   Ups_Vtx_noMC, Ups_Fit_noMC, theBeamSpotV) << std::endl;
-											//Jpsi_1_ctauErr->push_back(GetcTauErr(Ups_Vtx_noMC, Ups_Fit_noMC, theBeamSpotV));
-											//std::cout << "Ups_ctauErr: " << GetcTauErr(   Ups_Vtx_noMC, Ups_Fit_noMC, theBeamSpotV) << std::endl;
-						                    Ups_Chi2->push_back(double(Ups_Vtx_noMC->chiSquared()));
-						                    Ups_ndof->push_back(double(Ups_Vtx_noMC->degreesOfFreedom()));
-						                    Ups_VtxProb->push_back(ChiSquaredProbability((double)(Ups_Vtx_noMC->chiSquared()), 
-						                                                                 (double)(Ups_Vtx_noMC->degreesOfFreedom())));
-						                    Ups_px->push_back(Ups_Fit_noMC->currentState().kinematicParameters().momentum().x());
-						                    Ups_py->push_back(Ups_Fit_noMC->currentState().kinematicParameters().momentum().y());
-						                    Ups_pz->push_back(Ups_Fit_noMC->currentState().kinematicParameters().momentum().z());
-						                    Ups_phi->push_back(tmp_pt);
-						                    Ups_eta->push_back(tmp_eta);
-						                    Ups_pt->push_back(tmp_pt);
-						                }
-						                else{
-						                    // Store "error code" -9 for the secondary particles (quarkonia).
-						                    Ups_mass->push_back(-9);
+											Ups_mass->push_back(-9);
 						                    Ups_massErr->push_back(-9);
 						                    Ups_massDiff->push_back(-9);
 						                    Ups_Chi2->push_back(-9);
@@ -1206,8 +1201,19 @@ for(std::vector<edm::View<pat::PackedCandidate>::const_iterator>::const_iterator
 						                    Ups_phi->push_back(-9);
 						                    Ups_eta->push_back(-9);
 						                    Ups_pt->push_back(-9);
-						                }
-										std::cout << "Ups info stored" << endl; //testing segmentation
+											Phi_K_1_py->push_back(-9);
+                    						Phi_K_1_pz->push_back(-9);
+                    						Phi_K_1_pt->push_back(-9);
+                    						Phi_K_1_eta->push_back(-9);
+                    						Phi_K_1_phi->push_back(-9);
+                    						Phi_K_2_px->push_back(-9);
+                    						Phi_K_2_py->push_back(-9);
+                    						Phi_K_2_pz->push_back(-9);
+                    						Phi_K_2_pt->push_back(-9);
+                    						Phi_K_2_eta->push_back(-9);
+                    						Phi_K_2_phi->push_back(-9);
+											std::cout << "else ended"  << std::endl;
+										}
 						            }
 						        }
 							}
@@ -1416,8 +1422,6 @@ for(std::vector<edm::View<pat::PackedCandidate>::const_iterator>::const_iterator
     Phi_phi->clear();
     Phi_eta->clear();
     Phi_pt->clear();
-    Phi_ka_1_Idx->clear(); 
-    Phi_ka_2_Idx->clear();
 
     Ups_mass->clear();
     Ups_massErr->clear();
@@ -1433,6 +1437,24 @@ for(std::vector<edm::View<pat::PackedCandidate>::const_iterator>::const_iterator
     Ups_pt->clear();
     Ups_mu_1_Idx->clear();
     Ups_mu_2_Idx->clear();
+
+	Phi_K_1_Idx->clear();
+    Phi_K_1_px->clear();
+    Phi_K_1_py->clear();
+    Phi_K_1_pz->clear();
+    Phi_K_1_phi->clear();
+    Phi_K_1_eta->clear();
+    Phi_K_1_pt->clear();
+
+    Phi_K_2_Idx->clear();
+    Phi_K_2_px->clear();
+    Phi_K_2_py->clear();
+    Phi_K_2_pz->clear();
+    Phi_K_2_phi->clear();
+    Phi_K_2_eta->clear();
+    Phi_K_2_pt->clear();
+
+	std::cout<<"analyze ended"<< std::endl;
 } // analyze
 // 
 
@@ -1974,8 +1996,8 @@ void MultiLepPAT::beginJob()
     X_One_Tree_->Branch("Phi_phi", &Phi_phi);
     X_One_Tree_->Branch("Phi_eta", &Phi_eta);
     X_One_Tree_->Branch("Phi_pt", &Phi_pt);
-    X_One_Tree_->Branch("Phi_ka_1_Idx", &Phi_ka_1_Idx);
-    X_One_Tree_->Branch("Phi_ka_2_Idx", &Phi_ka_2_Idx);
+    X_One_Tree_->Branch("Phi_K_1_Idx", &Phi_K_1_Idx);
+    X_One_Tree_->Branch("Phi_K_2_Idx", &Phi_K_2_Idx);
 
     X_One_Tree_->Branch("Ups_mass", &Ups_mass);
     X_One_Tree_->Branch("Ups_massErr", &Ups_massErr);
