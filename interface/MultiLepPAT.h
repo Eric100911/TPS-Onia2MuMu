@@ -314,7 +314,8 @@ private:
                         *muIsGoodTightMuon,         *muIsJpsiTrigMatch,         
                         *muIsUpsTrigMatch,          *munMatchedSeg;
     vector<int>         *muIsPatLooseMuon, *muIsPatTightMuon, *muIsPatSoftMuon, *muIsPatMediumMuon;
-    
+    vector<int>         *muIsJpsiFilterMatch,       *muIsUpsFilterMatch;
+
     //for Maksat trigger match [Annotation by Eric Wang, 20240626]
     vector<int> *muUpsVrtxMatch, *muL3TriggerMatch;
     
@@ -327,9 +328,12 @@ private:
     vector<float>  *mupulldXdZ_pos_ArbST, *mupulldYdZ_pos_ArbST;
     vector<float>  *mupulldXdZ_pos_noArb_any, *mupulldYdZ_pos_noArb_any;
 
+    vector<float> *Jpsi_cand_mass_p4, *Jpsi_cand_mass_fit,
+                   *Ups_cand_mass_p4,  *Ups_cand_mass_fit;
+   
     // Muons from Jpsi and Upsilon.
     vector<float> *Jpsi_1_mu_1_Idx, *Jpsi_1_mu_2_Idx, 
-                  *Phi_ka_1_Idx, *Phi_ka_2_Idx,
+                  *Phi_K_1_Idx, *Phi_K_2_Idx,
                      *Ups_mu_1_Idx,    *Ups_mu_2_Idx;
 
     // [J-U-P] To add branches for the reconstructed phi.
@@ -356,6 +360,11 @@ private:
                      *Pri_ctau,  *Pri_ctauErr, *Pri_Chi2, *Pri_ndof, *Pri_VtxProb,
                      *Pri_px,    *Pri_py,    *Pri_pz, 
                      *Pri_phi,   *Pri_eta,   *Pri_pt;  
+
+    vector<float>        *Phi_K_1_px, *Phi_K_1_py, *Phi_K_1_pz,
+                         *Phi_K_2_px, *Phi_K_2_py, *Phi_K_2_pz,
+                         *Phi_K_1_eta, *Phi_K_1_phi, *Phi_K_1_pt,
+                         *Phi_K_2_eta, *Phi_K_2_phi, *Phi_K_2_pt;  
 
     //doMC
     vector<float> 
