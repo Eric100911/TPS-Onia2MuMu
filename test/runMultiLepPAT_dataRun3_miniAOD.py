@@ -5,14 +5,8 @@ ivars = VarParsing.VarParsing('analysis')
 ivars.inputFiles=(
 #'file:BPHSkim_UL.root',
 #'/store/user/zhenhu/MuOnia/BPHSkim-v3-Run2018D-12Nov2019_UL2018-v1/210321_010747/0000/BPHSkim_UL_556.root',
-#'/store/data/Run2023B/ParkingDoubleMuonLowMass0/MINIAOD/PromptReco-v1/000/366/406/00000/7a0c3c42-f92e-4d1d-952c-e13f90b0a8e3.root',
-#'/store/data/Run2023B/ParkingDoubleMuonLowMass0/MINIAOD/PromptReco-v1/000/366/403/00000/5be75e01-f0e6-4690-ba57-da041d5437a0.root'
-
-#'/store/data/Run2023B/ParkingDoubleMuonLowMass0/MINIAOD/PromptReco-v1/000/367/079/00000/e20ba4ff-963d-4d1e-8933-a5e9ca8f9559.root'
-'/store/data/Run2023D/ParkingDoubleMuonLowMass1/MINIAOD/PromptReco-v1/000/370/093/00000/9b491ed3-c0e4-4870-be7e-f93d79a5ae01.root'
-
-# '/store/data/Run2023B/ParkingDoubleMuonLowMass0/MINIAOD/PromptReco-v1/000/366/442/00000/77993198-8548-4532-83bc-7b2a8863c9b9.root'
-#'/store/data/Run2023D/ParkingDoubleMuonLowMass3/MINIAOD/22Sep2023_v2-v1/60000/02862e37-eb36-4b7e-82c8-648274e03648.root'
+#'/store/data/Run2023D/ParkingDoubleMuonLowMass1/MINIAOD/PromptReco-v1/000/370/093/00000/9b491ed3-c0e4-4870-be7e-f93d79a5ae01.root'
+'/store/data/Run2023C/ParkingDoubleMuonLowMass0/MINIAOD/PromptReco-v1/000/367/095/00000/9d4e4cde-7b29-420a-867b-4329d5acb1eb.root'
 )
 
 ivars.outputFile='mymultilep.root'
