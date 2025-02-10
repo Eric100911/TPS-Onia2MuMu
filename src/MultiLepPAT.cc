@@ -861,15 +861,14 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
             if (muTrack1.isNull()){
                 continue;
             }
+	    // Dynamics selection: eta cut.
+	    if(std::fabs(iMuon1->p4().eta()) > 2.5){
+                continue;
+            }
             // Build transient track and store.
             TransientTrack transTrk1(muTrack1, &(bFieldHandle));
             transMuonPair.push_back(muPairFactory.particle(transTrk1, muMass, chi2, ndof, muMassSigma));
             transMuPairId.push_back(iMuon1 - thePATMuonHandle->begin());
-
-            // Dynamics selection. Apply a eta cut of 2.5 here.
-            if(std::fabs(iMuon1->p4().eta()) < 2.5){
-                continue;
-            }
 
             // Next muon candidate.
             for(auto iMuon2  = iMuon1 + 1; 
@@ -882,22 +881,22 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
                         continue;
                     }
                     // Apply a eta cut of 2.5 here.
-                    if(std::fabs(iMuon1->p4().Eta()) < 2.5){
+                    if(std::fabs(iMuon2->p4().Eta()) > 2.5){
                         continue;
                     }
                     TransientTrack transTrk2(muTrack2, &(bFieldHandle));
                     // Charge requirement.
                     if ((iMuon1->charge() + iMuon2->charge()) != 0){
 		    	    	continue;
-		    	    }
-                    transMuonPair.push_back(muPairFactory.particle(transTrk2,  muMass, 
-                                                                   chi2, ndof, muMassSigma) );
-                    transMuPairId.push_back(iMuon2 - thePATMuonHandle->begin());
+                    }
                     // Dynamics selection. A very crude selection.
                     // Involves more calculation and is therefore done after kinematics.
-                    if(std::fabs((iMuon1->p4() + iMuon2->p4()).eta()) < 2.5 ){
+                    if(std::fabs((iMuon1->p4() + iMuon2->p4()).eta()) > 2.5 ){
                         continue;
                     }
+		    transMuonPair.push_back(muPairFactory.particle(transTrk2,  muMass, 
+                                                                   chi2, ndof, muMassSigma) );
+                    transMuPairId.push_back(iMuon2 - thePATMuonHandle->begin());
                     double muPairMassFromP4 = (iMuon1->p4() + iMuon2->p4()).mass();
                     #ifdef DISPLAY_DIMUON
                     double muPairMassFromFit;
