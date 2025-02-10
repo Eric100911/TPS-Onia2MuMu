@@ -65,7 +65,7 @@ RefCountedKinematicTree KinematicParticleVertexFitter::fit(const std::vector<Ref
 {
  typedef ReferenceCountingPointer<VertexTrack<6> > RefCountedVertexTrack;
 //sorting the input 
- if(particles.size()<2) throw VertexException("KinematicParticleVertexFitter::input states are less than 2"); 
+ if(particles.size()<2) throw ("KinematicParticleVertexFitter::input states are less than 2"); 
  InputSort iSort;
  std::pair<std::vector<RefCountedKinematicParticle>, std::vector<FreeTrajectoryState> > input = iSort.sort(particles);
  std::vector<RefCountedKinematicParticle> & newPart = input.first;

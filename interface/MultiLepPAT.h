@@ -269,7 +269,7 @@ private:
     // PDG 2023
 	static constexpr double myJpsiMass = 3.0969,   myJpsiMassErr = 0.00004;
 	static constexpr double myUpsMass  = 9.4603,   myUpsMassErr  = 0.0003;
-	static constexpr double myPhiMass  = 1.019455, myPhiMassErr    = 0.000020;
+	static constexpr double myPhiMass  = 1.019461, myPhiMassErr    = 0.000020;
 	static constexpr double myMuMass = 0.1056583745;
 	static constexpr double myMuMassErr = 0.0000000023; // From PDG 2024
 	static constexpr double myKMass = 0.493677; // Kaon mass and error
@@ -319,7 +319,8 @@ private:
                         *muIsUpsTrigMatch,          *munMatchedSeg;
     vector<int>         *muIsJpsiFilterMatch,       *muIsUpsFilterMatch;
     vector<int>         *muIsPatLooseMuon, *muIsPatTightMuon, *muIsPatSoftMuon, *muIsPatMediumMuon;
-    
+    vector<int>         *muIsJpsiFilterMatch,       *muIsUpsFilterMatch;
+
     //for Maksat trigger match [Annotation by Eric Wang, 20240626]
     vector<int> *muUpsVrtxMatch, *muL3TriggerMatch;
     
@@ -356,6 +357,7 @@ private:
     vector<float> *Jpsi_px, *Jpsi_py, *Jpsi_pz,
                   *Ups_px, *Ups_py, *Ups_pz,
                      *Phi_px,    *Phi_py,    *Phi_pz;
+
     // Primary vertex reconstructied from Jpsi and Upsilon.              
     vector<float>    *Pri_mass,  *Pri_massErr,
                      *Pri_ctau,  *Pri_ctauErr, *Pri_Chi2, *Pri_ndof, *Pri_VtxProb,
@@ -363,6 +365,11 @@ private:
                      *Pri_phi,   *Pri_eta,   *Pri_pt;
 
     // Branches for the supposed kaon tracks from Phi decay.
+    vector<float>        *Phi_K_1_px, *Phi_K_1_py, *Phi_K_1_pz,
+                         *Phi_K_2_px, *Phi_K_2_py, *Phi_K_2_pz,
+                         *Phi_K_1_eta, *Phi_K_1_phi, *Phi_K_1_pt,
+                         *Phi_K_2_eta, *Phi_K_2_phi, *Phi_K_2_pt;  
+
     vector<float>        *Phi_K_1_px, *Phi_K_1_py, *Phi_K_1_pz,
                          *Phi_K_2_px, *Phi_K_2_py, *Phi_K_2_pz,
                          *Phi_K_1_eta, *Phi_K_1_phi, *Phi_K_1_pt,

@@ -114,6 +114,7 @@
 #include <string>
 #include <unordered_set>
 #include <regex>
+#include <iterator>
 
 #include "DataFormats/MuonReco/interface/MuonSelectors.h"
 
@@ -301,7 +302,7 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
 {
 	
 
-    // Load the MC results [Annotated by Eric Wang, 20240704]
+    std::cout<<"Load the MC results [Annotated by Eric Wang, 20240704]"<<std::endl;
 
 	TLorentzVector MC_mu1p4, MC_mu2p4, MC_mu3p4, MC_mu4p4, MC_pi1p4, MC_pi2p4;
 	if (doMC)
@@ -367,6 +368,7 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
 				MC_mu2p4.SetXYZM((*MC_Granddau_mu2px)[0], (*MC_Granddau_mu2py)[0], (*MC_Granddau_mu2pz)[0], myMuMass);
 				MC_mu3p4.SetXYZM((*MC_Grandgranddau_mu3px)[0], (*MC_Grandgranddau_mu3py)[0], (*MC_Grandgranddau_mu3pz)[0], myMuMass);
 				MC_mu4p4.SetXYZM((*MC_Grandgranddau_mu4px)[0], (*MC_Grandgranddau_mu4py)[0], (*MC_Grandgranddau_mu4pz)[0], myMuMass);
+
 				MC_pi1p4.SetXYZM((*MC_Granddau_pi1px)[0], (*MC_Granddau_pi1py)[0], (*MC_Granddau_pi1pz)[0], myKMass);
 				MC_pi2p4.SetXYZM((*MC_Granddau_pi2px)[0], (*MC_Granddau_pi2py)[0], (*MC_Granddau_pi2pz)[0], myKMass);
 			} // for (const auto& particle: *(genParticles.product()))
@@ -629,13 +631,13 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
 	iEvent.getByToken(gtpatmuonToken_, thePATMuonHandle);
 	edm::Handle<edm::View<pat::PackedCandidate> > theTrackHandle;   //  MINIAOD
 	iEvent.getByToken(trackToken_,                theTrackHandle);  //  MINIAOD
-	std::vector<edm::View<pat::PackedCandidate>::const_iterator> nonMuonPionTrack;
+	std::vector<edm::View<pat::PackedCandidate>::const_iterator> nonMuonKaonTrack;
 
 	// Copy tracks iterators
  	for (edm::View<pat::PackedCandidate>::const_iterator iTrackc = theTrackHandle->begin(); // MINIAOD 
 	            iTrackc != theTrackHandle->end(); ++iTrackc                                 )
 	{
-		nonMuonPionTrack.push_back(iTrackc);
+		nonMuonKaonTrack.push_back(iTrackc);
 	}
 
     // Initialize the muon track block [Annotated by Eric Wang, 20240704]
@@ -645,7 +647,7 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
     #endif
 
 	if (thePATMuonHandle->size() >= 4) // Require at least 4 muons present [Annotated by Eric Wang, 20241214]
-	// JJP->4mu+2K, 改回4
+	// JUP->4mu+2K, 改回4
 	{
 		vector<std::string> theInputVariables;
 		theInputVariables.push_back("validFrac");
@@ -690,6 +692,7 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
 			// Find and delete muon Tracks in Tracks
 			for (std::vector<edm::View<pat::PackedCandidate>::const_iterator>::const_iterator iTrackfID  = nonMuonPionTrack.begin(); // MINIAOD
 			                                                                                  iTrackfID != nonMuonPionTrack.end(); 
+
                                                                                             ++iTrackfID                             )
 			{
 				if(iMuonP->track().isNull())
@@ -706,7 +709,7 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
                     && iTrackf->py() == iMuonP->track()->py() 
                     && iTrackf->pz() == iMuonP->track()->pz())
 				{
-					nonMuonPionTrack.erase(iTrackfID);
+					nonMuonKaonTrack.erase(iTrackfID);
 					iTrackfID = iTrackfID - 1;
 				}
 			}
@@ -814,6 +817,7 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
 	// It takes a lot less memory out of the loop
 	KinematicConstraint *Jpsi_cs = new MassKinematicConstraint(myJpsiMass, myJpsiMassErr);
 	KinematicConstraint *Jpsi_cs34 = new MassKinematicConstraint(myJpsiMass, myJpsiMassErr);
+
 	// 要做mass constrain的话这里要加phi的相关变量
 	double pionPTcut = 2;
 	double pionDRcut = 0.7;
@@ -834,7 +838,7 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
     // [J-U-P] Will only need 4 muons.
 
     // Will be working reco from 3 pairs of muons. 
-	if (thePATMuonHandle->size() < 4)
+	if (thePATMuonHandle->size() < 4||nonMuonKaonTrack.size() < 2)//warning  //Different from JJP
 	{
 		return;
 	}
@@ -844,6 +848,8 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
     std::vector<uint>                        transMuPairId;
     ParticleMass muMass = myMuMass;
     float muMassSigma   = myMuMassErr;
+	ParticleMass kaonMass = myKaonMass;
+	float kaonMassSigma = myKaonMassErr;
     float chi2 = 0.;
 	float ndof = 0.;
 
@@ -893,7 +899,6 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
         // Next muon candidate.
         for(auto iMuon2  = iMuon1 + 1; 
                  iMuon2 != thePATMuonHandle->end(); ++iMuon2){
-            // DEBUG: display current muon pair.
             // Build transient track and store.
             TrackRef muTrack2 = iMuon2->track();
             if (muTrack2.isNull()){
@@ -957,8 +962,10 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
      *      The intermidiate storage for muon pair stores the muons as 
      *      RefCountedKinematicParticle. This saves repeated reco.
     **************************************************************************/
+
 	// Classes for the fitting process.
     RefCountedKinematicTree vtxFitTree_Jpsi;
+
     RefCountedKinematicTree vtxFitTree_Ups;
     RefCountedKinematicTree vtxFitTree_Phi;
     RefCountedKinematicTree vtxFitTree_Pri;
@@ -968,6 +975,7 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
     RefCountedKinematicVertex   Jpsi_Vtx_noMC, Ups_Vtx_noMC, Phi_Vtx_noMC, Pri_Vtx_noMC;
     KinematicParameters         Jpsi_Para,     Ups_Para,     Phi_Para,     Pri_Para;
     std::vector< RefCountedKinematicParticle >  interOnia;
+	std::vector< RefCountedKinematicParticle >  interOniaJU;
 
     // Markers for fitting. Only marks if a result is constructed
     bool isValidJpsi, isValidUps, isValidPhi, isValidPri;
@@ -1310,7 +1318,10 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
     #ifdef DISPLAY_STAGE
     puts("Filling into TTree.");
     #endif
+
+	
     // Currently: Event
+	std::cout << "the big circle ended" << endl; //testing segmentation
 	if (Pri_VtxProb->size() > 0 || doMC)
 	{
 		X_One_Tree_->Fill();
@@ -1488,6 +1499,7 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
     Pri_eta->clear();
     Pri_pt->clear();
 
+
     Jpsi_mass->clear();
     Jpsi_massErr->clear();
     Jpsi_massDiff->clear();
@@ -1522,6 +1534,7 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
     Ups_mu_1_Idx->clear();
     Ups_mu_2_Idx->clear();
 
+
     Phi_mass->clear();
     Phi_massErr->clear();
     Phi_massDiff->clear();
@@ -1538,6 +1551,7 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
     Phi_pt->clear();
 
     Phi_K_1_Idx->clear();
+
     Phi_K_1_px->clear();
     Phi_K_1_py->clear();
     Phi_K_1_pz->clear();
@@ -1661,7 +1675,10 @@ void MultiLepPAT::tracksToMuonPair(vector<RefCountedKinematicParticle>&        a
  *      Construct muons from tracks.
  *      Assuming muon mass and mass error as PDG 2023 values.
  *      Adds reconstructed muons to the arg_FromParticles.
+ *      Adds reconstructed muons to the arg_FromParticles.
  * [Parameters]
+ *      vector<RefCountedKinematicParticle>&        arg_FromParticles
+ *          - The vector to which reconstructed particles are added.
  *      vector<RefCountedKinematicParticle>&        arg_FromParticles
  *          - The vector to which reconstructed particles are added.
  * [Return value]
@@ -1714,7 +1731,7 @@ bool MultiLepPAT::particlesToVtx(const vector<RefCountedKinematicParticle>&  arg
 
 bool MultiLepPAT::particlesToVtx(const vector<RefCountedKinematicParticle>&  arg_FromParticles,
                                  const string&                               arg_Message){
-    KinematicParticleVertexFitter fitter;
+	KinematicParticleVertexFitter fitter;
     RefCountedKinematicTree vertexFitTree;
     bool fitError = false;
 	double vtxprob = 0;
@@ -1722,7 +1739,7 @@ bool MultiLepPAT::particlesToVtx(const vector<RefCountedKinematicParticle>&  arg
         vertexFitTree = fitter.fit(arg_FromParticles);
     }catch(...){
         fitError = true;
-        std::cout << "[Fit Error] " << arg_Message <<  std::endl;
+		std::cout << "[Fit Error] " << arg_Message <<  std::endl;
     }
 	if (fitError || !vertexFitTree->isValid()){
         return false;
@@ -1761,14 +1778,18 @@ bool MultiLepPAT::particlesToVtx(const vector<RefCountedKinematicParticle>&  arg
 bool MultiLepPAT::particlesToVtx(RefCountedKinematicTree&                    arg_VertexFitTree,
                                  const vector<RefCountedKinematicParticle>&  arg_FromParticles,
                                  const string&                               arg_Message){
-    KinematicParticleVertexFitter fitter;
+	KinematicParticleVertexFitter fitter;
+	std::cout<<"1"<<std::endl;
     bool fitError = false;
+
 	double vtxprob = 0;
     try{
         arg_VertexFitTree = fitter.fit(arg_FromParticles);
+		std::cout<<"3"<<std::endl;
     }catch(...){
         fitError = true;
-        std::cout << "[Fit Error] " << arg_Message <<  std::endl;
+		std::cout<<"4"<<std::endl;
+		std::cout << "[Fit Error] " << arg_Message <<  std::endl;
     }
 	if (fitError || !arg_VertexFitTree->isValid()){
         return false;
@@ -1956,6 +1977,7 @@ bool MultiLepPAT::isOverlapPair(const muList_t& arg_MuonPair1,
  *      To be used in resolving "multi-candidate" events.
 ******************************************************************************/
 
+
 double MultiLepPAT::fitResEval(double arg_massDiff_Jpsi, double arg_massErr_Jpsi,
                                double arg_massDiff_Ups,  double arg_massErr_Ups,
                                double arg_massDiff_Phi,  double arg_massErr_Phi   ){
@@ -2085,6 +2107,7 @@ void MultiLepPAT::beginJob()
     X_One_Tree_->Branch("Jpsi_mu_1_Idx", &Jpsi_mu_1_Idx);
     X_One_Tree_->Branch("Jpsi_mu_2_Idx", &Jpsi_mu_2_Idx);
 
+
     X_One_Tree_->Branch("Ups_mass", &Ups_mass);
     X_One_Tree_->Branch("Ups_massErr", &Ups_massErr);
     X_One_Tree_->Branch("Ups_massDiff", &Ups_massDiff);
@@ -2212,6 +2235,7 @@ double MultiLepPAT::GetcTau(RefCountedKinematicVertex&   decayVrtx,
     TVector3 pperp(kinePart->currentState().globalMomentum().x(),
         kinePart->currentState().globalMomentum().y(), 0);
     TVector3 vdiff = vtx - pvtx;
+
 
     //Jinfeng 10.3
     GlobalError DecayErr = (*decayVrtx).error();
