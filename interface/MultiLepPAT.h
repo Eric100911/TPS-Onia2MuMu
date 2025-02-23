@@ -319,7 +319,6 @@ private:
                         *muIsUpsTrigMatch,          *munMatchedSeg;
     vector<int>         *muIsJpsiFilterMatch,       *muIsUpsFilterMatch;
     vector<int>         *muIsPatLooseMuon, *muIsPatTightMuon, *muIsPatSoftMuon, *muIsPatMediumMuon;
-    vector<int>         *muIsJpsiFilterMatch,       *muIsUpsFilterMatch;
 
     //for Maksat trigger match [Annotation by Eric Wang, 20240626]
     vector<int> *muUpsVrtxMatch, *muL3TriggerMatch;
@@ -365,11 +364,6 @@ private:
                      *Pri_phi,   *Pri_eta,   *Pri_pt;
 
     // Branches for the supposed kaon tracks from Phi decay.
-    vector<float>        *Phi_K_1_px, *Phi_K_1_py, *Phi_K_1_pz,
-                         *Phi_K_2_px, *Phi_K_2_py, *Phi_K_2_pz,
-                         *Phi_K_1_eta, *Phi_K_1_phi, *Phi_K_1_pt,
-                         *Phi_K_2_eta, *Phi_K_2_phi, *Phi_K_2_pt;  
-
     vector<float>        *Phi_K_1_px, *Phi_K_1_py, *Phi_K_1_pz,
                          *Phi_K_2_px, *Phi_K_2_py, *Phi_K_2_pz,
                          *Phi_K_1_eta, *Phi_K_1_phi, *Phi_K_1_pt,
