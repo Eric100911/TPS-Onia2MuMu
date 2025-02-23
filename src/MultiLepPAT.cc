@@ -1046,11 +1046,7 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
 	
     // Currently: Event
 	std::cout << "the big circle ended" << endl; //testing segmentation
-	if (Pri_VtxProb->size() > 0 || doMC)
-	{
 		X_One_Tree_->Fill();
-	}
-
 	// std::cout << "Finish the part of fitting."  << endl;
 
 	if (Debug_)
