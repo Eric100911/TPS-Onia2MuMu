@@ -180,12 +180,24 @@ private:
                                  const MagneticField&                        arg_bField,
                                  const TrackRef arg_Trk1,     const TrackRef arg_Trk2       );
 
+    // Fitting particles to a vertex, only requiring a "valid" fit.
     static bool particlesToVtx(const vector<RefCountedKinematicParticle>&  arg_MuonResults);
     static bool particlesToVtx(const vector<RefCountedKinematicParticle>&  arg_MuonResults,
                                const string&                               arg_Message);
     static bool particlesToVtx(RefCountedKinematicTree&                    arg_VertexFitTree,
                                const vector<RefCountedKinematicParticle>&  arg_Muons,
                                const string&                               arg_Message);
+                               
+    // Fitting particles to a vertex, requiring some vertex probability cut.
+    static bool particlesToVtx(const vector<RefCountedKinematicParticle>&  arg_MuonResults,
+                               const double&                               arg_VtxProbCut);
+    static bool particlesToVtx(const vector<RefCountedKinematicParticle>&  arg_MuonResults,
+                               const string&                               arg_Message,
+                               const double&                               arg_VtxProbCut);
+    static bool particlesToVtx(RefCountedKinematicTree&                    arg_VertexFitTree,
+                               const vector<RefCountedKinematicParticle>&  arg_Muons,
+                               const string&                               arg_Message,
+                               const double&                               arg_VtxProbCut);
 
     static bool extractFitRes(RefCountedKinematicTree&     arg_VtxTree,
                               RefCountedKinematicParticle& res_Part,

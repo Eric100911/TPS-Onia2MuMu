@@ -1486,16 +1486,8 @@ bool MultiLepPAT::particlesToVtx(const vector<RefCountedKinematicParticle>&  arg
 	if (fitError || !vertexFitTree->isValid()){
         return false;
     }
-	RefCountedKinematicVertex vFit_vertex_noMC = vertexFitTree->currentDecayVertex();
-	double vtxprob;
-    try{
-        vtxprob = ChiSquaredProbability((double)(vFit_vertex_noMC->chiSquared()),
-                                        (double)(vFit_vertex_noMC->degreesOfFreedom()));
-    }catch(...){
-        vtxprob = 0.0;
-    }   
 
-    return (vtxprob >= VtxProbCut);
+    return true;
 }
 
 /******************************************************************************
@@ -1518,6 +1510,125 @@ bool MultiLepPAT::particlesToVtx(const vector<RefCountedKinematicParticle>&  arg
 
 bool MultiLepPAT::particlesToVtx(const vector<RefCountedKinematicParticle>&  arg_FromParticles,
                                  const string&                               arg_Message){
+    KinematicParticleVertexFitter fitter;
+    RefCountedKinematicTree vertexFitTree;
+    bool fitError = false;
+    try{
+        vertexFitTree = fitter.fit(arg_FromParticles);
+    }catch(...){
+        fitError = true;
+        std::cout << "[Fit Error] " << arg_Message <<  std::endl;
+    }
+	if (fitError || !vertexFitTree->isValid()){
+        return false;
+    }
+    return true;
+}
+/******************************************************************************
+ * [Name of function]  
+ *      particlesToVtx
+ * [Description]  
+ *      Construct muons from tracks.
+ *      Assuming muon mass and mass error as PDG 2023 values.
+ *      Adds reconstructed muons to the arg_FromParticles.
+ * [Parameters]
+ *      vector<RefCountedKinematicParticle>&        arg_FromParticles
+ *          - The vector to which reconstructed particles are added.
+ *      const string&                               arg_Message  
+ *          - The message to be displayed in case of error.
+ *      RefCountedKinematicTree&                    arg_VertexFitTree
+ *          - The KinematicTree to which the vertex fit is added.    
+ * [Return value]
+ *      (void)
+ * [Note]
+ *      This definition uses an "explicit" KinematicTree.
+ *      The KinematicTree is passed as an argument and is modified after call.
+******************************************************************************/
+
+bool MultiLepPAT::particlesToVtx(RefCountedKinematicTree&                    arg_VertexFitTree,
+                                 const vector<RefCountedKinematicParticle>&  arg_FromParticles,
+                                 const string&                               arg_Message){
+    KinematicParticleVertexFitter fitter;
+    bool fitError = false;
+    try{
+        arg_VertexFitTree = fitter.fit(arg_FromParticles);
+    }catch(...){
+        fitError = true;
+        std::cout << "[Fit Error] " << arg_Message <<  std::endl;
+    }
+	if (fitError || !arg_VertexFitTree->isValid()){
+        return false;
+    }
+    return true;
+}
+
+/******************************************************************************
+ * [Name of function]  
+ *      particlesToVtx
+ * [Description]  
+ *      Construct muons from tracks.
+ *      Assuming muon mass and mass error as PDG 2023 values.
+ *      Adds reconstructed muons to the arg_FromParticles.
+ *      A vtxProb cut is applied.
+ * [Parameters]
+ *      vector<RefCountedKinematicParticle>&        arg_FromParticles
+ *          - The vector to which reconstructed particles are added.
+ *      const double&                               arg_VtxProbCut   
+ * [Return value]
+ *      (void)
+ * [Note]
+ *      A "silent" version of fitting particles to vertex. No error message
+ *      will be printed in case of failed fitting.
+******************************************************************************/
+
+bool MultiLepPAT::particlesToVtx(const vector<RefCountedKinematicParticle>&  arg_FromParticles,
+                                 const double&                               arg_VtxProbCut){
+    KinematicParticleVertexFitter fitter;
+    RefCountedKinematicTree vertexFitTree;
+    bool fitError = false;
+    try{
+        vertexFitTree = fitter.fit(arg_FromParticles);
+    }catch(...){
+        fitError = true;
+    }
+	if (fitError || !vertexFitTree->isValid()){
+        return false;
+    }
+	RefCountedKinematicVertex vFit_vertex_noMC = vertexFitTree->currentDecayVertex();
+	double vtxprob;
+    try{
+        vtxprob = ChiSquaredProbability((double)(vFit_vertex_noMC->chiSquared()),
+                                        (double)(vFit_vertex_noMC->degreesOfFreedom()));
+    }catch(...){
+        vtxprob = 0.0;
+    }   
+
+    return (vtxprob >= arg_VtxProbCut);
+}
+
+/******************************************************************************
+ * [Name of function]  
+ *      particlesToVtx
+ * [Description]  
+ *      Construct muons from tracks.
+ *      Assuming muon mass and mass error as PDG 2023 values.
+ *      Adds reconstructed muons to the arg_FromParticles.
+ * [Parameters]
+ *      vector<RefCountedKinematicParticle>&        arg_FromParticles
+ *          - The vector to which reconstructed particles are added.
+ *      const string&                               arg_Message  
+ *          - The message to be displayed in case of error.
+ *      const double&                               arg_VtxProbCut 
+ *         - The cut value for the vertex probability.
+ * [Return value]
+ *      (void)
+ * [Note]
+ *      This definition uses an "implicit" VertexFitter and KinematicTree. 
+******************************************************************************/
+
+bool MultiLepPAT::particlesToVtx(const vector<RefCountedKinematicParticle>&  arg_FromParticles,
+                                 const string&                               arg_Message,
+                                 const double&                               arg_VtxProbCut){
     KinematicParticleVertexFitter fitter;
     RefCountedKinematicTree vertexFitTree;
     bool fitError = false;
@@ -1555,6 +1666,8 @@ bool MultiLepPAT::particlesToVtx(const vector<RefCountedKinematicParticle>&  arg
  *          - The message to be displayed in case of error.
  *      RefCountedKinematicTree&                    arg_VertexFitTree
  *          - The KinematicTree to which the vertex fit is added.    
+ *      const double&                               arg_VtxProbCut
+ *         - The cut value for the vertex probability.
  * [Return value]
  *      (void)
  * [Note]
@@ -1564,7 +1677,8 @@ bool MultiLepPAT::particlesToVtx(const vector<RefCountedKinematicParticle>&  arg
 
 bool MultiLepPAT::particlesToVtx(RefCountedKinematicTree&                    arg_VertexFitTree,
                                  const vector<RefCountedKinematicParticle>&  arg_FromParticles,
-                                 const string&                               arg_Message){
+                                 const string&                               arg_Message,
+                                 const double&                               arg_VtxProbCut){
     KinematicParticleVertexFitter fitter;
     bool fitError = false;
     try{
@@ -1585,8 +1699,9 @@ bool MultiLepPAT::particlesToVtx(RefCountedKinematicTree&                    arg
         vtxprob = 0.0;
     }   
 
-    return (vtxprob >= VtxProbCut);
+    return (vtxprob >= arg_VtxProbCut);
 }
+
 
 /******************************************************************************
  * [Name of function]  
