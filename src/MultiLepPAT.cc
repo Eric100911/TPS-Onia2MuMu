@@ -290,9 +290,9 @@ MultiLepPAT::~MultiLepPAT()
 // ------------ method called to for each event  ------------
 void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetup)
 {
-	#ifdef DISPLAY_STAGE
-    puts("begin MultiLepPAT::analyze()"); // Display analysis stage for debugging.
-    #endif
+	if(Debug_){
+        puts("begin MultiLepPAT::analyze()"); // Display analysis stage for debugging.
+    }
 
     //Relink();
 
@@ -391,9 +391,9 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
      *      - Integrated from AliceQuen/Onia2MuMu
     **************************************************************************/
 
-    # ifdef DISPLAY_STAGE
-    puts("HLT Section begins");
-    # endif
+    if(Debug_){
+        puts("HLT Section begins");
+    }
 
 	edm::Handle<edm::TriggerResults> hltresults;
 	bool Error_t = false;
@@ -429,17 +429,17 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
         for (unsigned int UpsTrig = 0; UpsTrig < nUpstrigger; UpsTrig++){
             UpsilonMatchTrig[UpsTrig] = 0;
         } // Initiating Upsilon trigger
-        #ifdef DISPLAY_STAGE
-        puts("Initiated Jpsi and Upsilon triggers");
-        #endif
+        if(Debug_){
+            puts("Initiated Jpsi and Upsilon triggers");
+        }
 
 		for (int itrig = 0; itrig < ntrigs; itrig++)            // Loop over all triggers
 		{
 			string trigName = triggerNames_.triggerName(itrig); // Extracting HLT trigger name
 			int hltflag = (*hltresults)[itrig].accept();        // Check if accepted by this trigger
-            #ifdef DISPLAY_STAGE
-            cout << "Trigger Name: " << trigName << " [ Flag " << hltflag << "]" << std::endl;
-            #endif               
+            if(Debug_){
+                cout << "Trigger Name: " << trigName << " [ Flag " << hltflag << "]" << std::endl;
+            }              
 			trigRes->push_back(hltflag);         
 			trigNames->push_back(trigName);
 
@@ -494,9 +494,10 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
 		}
 	} // end of HLT trigger info
 
-    #ifdef DISPLAY_STAGE
-    puts("HLT Section ends");
-    #endif
+
+    if (Debug_){
+        puts("HLT Section ends");
+    }
 
 	std::string vrtxFilter("hltVertexmumuFilterUpsilonMuon");
 	std::string L3Filter("hltTripleMuL3PreFiltered0");
@@ -521,9 +522,9 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
 	BeamSpot beamSpot;
 	math::XYZPoint RefVtx;
 
-    #ifdef DISPLAY_STAGE
-    puts("Primary Vertex Section initiating");
-    #endif
+    if(Debug_){
+        puts("Primary Vertex Section initiating");
+    }
 
 	// get BeamSplot
 	edm::Handle<reco::BeamSpot> beamSpotHandle;
@@ -547,9 +548,9 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
 	///////////////////////////////////////////////////////////////////////
 
     // Determine the good vertices [Annotated by Eric Wang, 20240704]
-    #ifdef DISPLAY_STAGE
-    puts("Primary Vertex Section begins");
-    #endif
+    if(Debug_){
+        puts("Primary Vertex Section begins");
+    }
 
 	int myNGoodPrimVtx = 0;
 	for (unsigned myi = 0; myi < recVtxs->size(); myi++)
@@ -638,9 +639,9 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
 
 	// fill muon track block
     // TO_IMPR_CPP11 (for(auto ...)) [Tagged by Eric Wang, 20240704]
-    #ifdef DISPLAY_STAGE
-    puts("Muon Track Section begins");
-    #endif
+    if(Debug_){
+        puts("Muon Track Section begins");
+    }
 
 	for (edm::View<pat::Muon>::const_iterator iMuonP =  thePATMuonHandle->begin(); //  MINIAOD
 		                                      iMuonP != thePATMuonHandle->end(); ++iMuonP)
@@ -701,9 +702,9 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
 		    bool isJpsiTrigMatch = false;
             bool isJpsiFilterMatch = false;
 
-            #ifdef DISPLAY_STAGE
-            puts("Match to Jpsi Trigger");
-            #endif
+            if(Debug_){
+                puts("Match to Jpsi Trigger");
+            }
 
 		    for (unsigned int JpsiTrig = 0; JpsiTrig < TriggersForJpsi_.size(); JpsiTrig++)
 		    {
@@ -714,9 +715,9 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
 		    }
 		    muIsJpsiTrigMatch->push_back(isJpsiTrigMatch);
 
-            #ifdef DISPLAY_STAGE
-            puts("Match to Jpsi Filter");
-            #endif
+            if(Debug_){
+                puts("Match to Jpsi Filter");
+            }
 
             for (unsigned int JpsiFilter = 0; JpsiFilter < FiltersForJpsi_.size(); JpsiFilter++){
                 if(isJpsiTrigMatch){ // remove hltresults.isValid() for now
@@ -737,9 +738,9 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
 		    bool isUpsTrigMatch = false;
             bool isUpsFilterMatch = false;
 
-            #ifdef DISPLAY_STAGE
-            puts("Match to Upsilon Trigger");
-            #endif
+            if(Debug_){
+                puts("Match to Upsilon Trigger");
+            }
 
 		    for (unsigned int UpsTrig = 0; UpsTrig < TriggersForUpsilon_.size(); UpsTrig++)
 		    {
@@ -750,9 +751,9 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
             }
             muIsUpsTrigMatch->push_back(isUpsTrigMatch);
 
-            #ifdef DISPLAY_STAGE
-            puts("Match to Upsilon Filter");
-            #endif
+            if(Debug_){
+                puts("Match to Upsilon Filter");
+            }
 
             for (unsigned int UpsFilter = 0; UpsFilter < FiltersForUpsilon_.size(); UpsFilter++){
                 if(isUpsTrigMatch && hltresults.isValid()){
@@ -841,9 +842,9 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
      *      RefCountedKinematicParticle. This saves repeated reco.
     **************************************************************************/
 
-    #ifdef DISPLAY_STAGE
-    puts("Muon Pairing Section begins");
-    #endif
+    if(Debug_){
+        puts("Muon Pairing Section begins");
+    }
     // Candidates of muon pairs from Jpsi or Upsilon
     using muon_t   = RefCountedKinematicParticle;
     using muList_t = std::pair< vector<muon_t>, vector<uint> >;
@@ -894,8 +895,8 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
                     if(std::fabs((iMuon1->p4() + iMuon2->p4()).eta()) > 2.5 ){
                         continue;
                     }
-		    transMuonPair.push_back(muPairFactory.particle(transTrk2,  muMass, 
-                                                                   chi2, ndof, muMassSigma) );
+                    transMuonPair.push_back(muPairFactory.particle(transTrk2, muMass, 
+                                                                        chi2, ndof, muMassSigma) );
                     transMuPairId.push_back(iMuon2 - thePATMuonHandle->begin());
                     double muPairMassFromP4 = (iMuon1->p4() + iMuon2->p4()).mass();
                     #ifdef DISPLAY_DIMUON
@@ -973,9 +974,10 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
      *      - Possible selection: massErr ratio; total pT^2;
      *      - Add event number 
     **************************************************************************/
-    #ifdef DISPLAY_STAGE
-    puts("Quarkonia Fitting Section begins");
-    #endif
+    if (Debug_){
+        puts("Quarkonia Fitting Section begins");
+    }
+    
 
     // Classes for the fitting process.
     RefCountedKinematicTree vtxFitTree_Jpsi_1;
@@ -1039,9 +1041,10 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
                         isValidFitRes_Pri = extractFitRes(vtxFitTree_Pri, Pri_Fit_noMC, Pri_Vtx_noMC, tmp_Pri_massErr);
                     }
                     if(isValidFitRes_Pri){
-                        #ifdef DISPLAY_STAGE
-                        puts("Good Fit");
-                        #endif
+                        if (Debug_){
+                            puts("A Good Fit!");
+                        }
+                        
                         // Extract the vertex and the particle parameters from valid results.
                         // getDynamics(Pri_Fit_noMC, tmp_pt, tmp_eta, tmp_phi);
                         // Store the fitting results into temporary vectors.
@@ -1124,22 +1127,18 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
             }
         }
     }
-    #ifdef DISPLAY_STAGE
-    puts("Event Filling Section begins");
-    DisplayTempBranchInfo();
-    #endif
+    
+    if(Debug_){
+        puts("Quarkonia Fitting Section ends");
+    }
     // Currently: Event
 	if (Pri_VtxProb->size() > 0 || doMC || Jpsi_cand_mass_p4->size() > 0 || Ups_cand_mass_p4->size() > 0)
 	{
 		X_One_Tree_->Fill();
 	}
-    #ifdef DISPLAY_STAGE
-    puts("Event Filling Section ends");
-    #endif
-
-	if (Debug_)
-	{
-	}
+    if(Debug_){
+        puts("Event ends");
+    }
     // Reset the vectors [Annotated by Eric Wang, 20240704]
 	if (doMC)
 	{
