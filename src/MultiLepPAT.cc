@@ -169,6 +169,7 @@ MultiLepPAT::MultiLepPAT(const edm::ParameterSet &iConfig)
 	  FiltersForUpsilon_(iConfig.getUntrackedParameter<std::vector<std::string>>("FiltersForUpsilon")),
 	  Debug_(iConfig.getUntrackedParameter<bool>("Debug_Output", false)),
 	  Chi_Track_(iConfig.getUntrackedParameter<double>("Chi2NDF_Track", 10)),
+      OniaDecayVtxProbCut_(iConfig.getUntrackedParameter<double>("OniaDecayVtxProbCut", 0.001))
 	  X_One_Tree_(0),
 
 	  runNum(0), evtNum(0), lumiNum(0), nGoodPrimVtx(0),
@@ -899,41 +900,21 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
                                                                         chi2, ndof, muMassSigma) );
                     transMuPairId.push_back(iMuon2 - thePATMuonHandle->begin());
                     double muPairMassFromP4 = (iMuon1->p4() + iMuon2->p4()).mass();
-                    #ifdef DISPLAY_DIMUON
-                    double muPairMassFromFit;
-	                double muPairMassErrFromFit;
-                    #endif
                     isJpsiMuPair = (2 <  muPairMassFromP4 && muPairMassFromP4 < 6);
                     isUpsMuPair  = (8 <  muPairMassFromP4 && muPairMassFromP4 < 12);
                     // isJpsiMuPair = true;
                     // isUpsMuPair  = true;
                     if(isJpsiMuPair || isUpsMuPair){
-                        if(particlesToVtx(transMuonPair)){
+                        if(particlesToVtx(transMuonPair, OniaDecayVtxProbCut_)){
                             // Having passed all the checks, store the muon pair.
-                            particlesToVtx(muVtxFitTree, transMuonPair, "final muon pair");
-                            // Extract the fitted mass from the tree.
-                            #ifdef DISPLAY_DIMUON
-                            extractFitRes(muVtxFitTree, muPair_noMC, muVtxFit_noMC, muPairMassErrFromFit);
-                            muPairMassFromFit = muPair_noMC->currentState().mass();
-                            #endif
+                            particlesToVtx(muVtxFitTree, transMuonPair, "final muon pair", OniaDecayVtxProbCut_);
                             if(isJpsiMuPair){
                                 muPairCand_Jpsi.push_back(
                                     std::make_pair(transMuonPair, transMuPairId) );
-                                    // [DEBUG] Check dimuon mass spectrum.
-                                    // Add to the list of Jpsi candidates.
-                                    #ifdef DISPLAY_DIMUON
-                                    Jpsi_cand_mass_p4->push_back( muPairMassFromP4 );
-                                    Jpsi_cand_mass_fit->push_back( muPairMassFromFit );
-                                    #endif
                             }
                             if(isUpsMuPair){
                                 muPairCand_Ups.push_back(
                                     std::make_pair(transMuonPair, transMuPairId) );
-                                    // [TODO] Check dimuon mass spectrum.
-                                    #ifdef DISPLAY_DIMUON
-                                    Ups_cand_mass_p4->push_back( muPairMassFromP4 );
-                                    Ups_cand_mass_fit->push_back( muPairMassFromFit );
-                                    #endif
                             }
                         }
                     }
@@ -1017,9 +998,9 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
                 isValidPri = false;
                 // Start constructing the fit tree.
                 // Use particlesToVtx() to fit the quarkonia once more.
-                isValidJpsi_1 = particlesToVtx(vtxFitTree_Jpsi_1, muPair_Jpsi_1->first, "final Jpsi_1");
-                isValidJpsi_2 = particlesToVtx(vtxFitTree_Jpsi_2, muPair_Jpsi_2->first, "final Jpsi_2");
-                isValidUps    = particlesToVtx(vtxFitTree_Ups,    muPair_Ups->first,    "final Ups");
+                isValidJpsi_1 = particlesToVtx(vtxFitTree_Jpsi_1, muPair_Jpsi_1->first, "final Jpsi_1", OniaDecayVtxProbCut_);
+                isValidJpsi_2 = particlesToVtx(vtxFitTree_Jpsi_2, muPair_Jpsi_2->first, "final Jpsi_2", OniaDecayVtxProbCut_);
+                isValidUps    = particlesToVtx(vtxFitTree_Ups,    muPair_Ups->first,    "final Ups",    OniaDecayVtxProbCut_);
                 // Check if all fit trees give non-null results.
                 if(isValidJpsi_1 && isValidJpsi_2 && isValidUps){
                     // Extract the vertex and the particle parameters from valid results.

@@ -187,7 +187,7 @@ private:
     static bool particlesToVtx(RefCountedKinematicTree&                    arg_VertexFitTree,
                                const vector<RefCountedKinematicParticle>&  arg_Muons,
                                const string&                               arg_Message);
-                               
+
     // Fitting particles to a vertex, requiring some vertex probability cut.
     static bool particlesToVtx(const vector<RefCountedKinematicParticle>&  arg_MuonResults,
                                const double&                               arg_VtxProbCut);
@@ -279,6 +279,8 @@ private:
     bool Debug_;
     double Chi_Track_;
 
+    double OniaDecayVtxProbCut_;
+
     // PDG 2023
 	static constexpr double myJpsiMass = 3.0969,   myJpsiMassErr = 0.00004;
 	static constexpr double myUpsMass  = 9.4603,   myUpsMassErr  = 0.0003;
@@ -288,9 +290,6 @@ private:
 	static constexpr double myPiMass = 0.13957039;
 	// try
 	static constexpr double myPiMassErr = 0.00000018; // From PDG 2024
-
-    // general restrictions for vtx prob
-    static constexpr double VtxProbCut = 0.01;
 
     // Constructing TTree object [Annotation by Eric Wang, 20240626]
     
