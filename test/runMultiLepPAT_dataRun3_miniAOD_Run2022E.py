@@ -5,7 +5,7 @@ ivars = VarParsing.VarParsing('analysis')
 ivars.inputFiles=(
 #'file:BPHSkim_UL.root',
 #'/store/user/zhenhu/MuOnia/BPHSkim-v3-Run2018D-12Nov2019_UL2018-v1/210321_010747/0000/BPHSkim_UL_556.root',
-'/store/data/Run2022F/ParkingDoubleMuonLowMass5/MINIAOD/PromptReco-v1/000/360/390/00000/7c6822f8-0a4c-4ca8-8bf1-1774335ec27f.root'
+'/store/data/Run2022E/ParkingDoubleMuonLowMass0/MINIAOD/PromptReco-v1/000/359/612/00000/1d1e9407-f0de-460e-b2ed-b451d588a4c9.root'
 )
 
 ivars.outputFile='mymultilep_Run2022E.root'
