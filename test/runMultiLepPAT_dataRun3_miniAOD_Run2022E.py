@@ -8,7 +8,7 @@ ivars.inputFiles=(
 '/store/data/Run2022F/ParkingDoubleMuonLowMass5/MINIAOD/PromptReco-v1/000/360/390/00000/7c6822f8-0a4c-4ca8-8bf1-1774335ec27f.root'
 )
 
-ivars.outputFile='mymultilep.root'
+ivars.outputFile='mymultilep_Run2022E.root'
 # get and parse the command line arguments
 ivars.parseArguments()
 
