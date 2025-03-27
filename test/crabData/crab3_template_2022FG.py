@@ -9,7 +9,7 @@ config.General.requestName = 'TaskTag'
 config.section_('JobType')
 config.JobType.psetName = '../runMultiLepPAT_dataRun3_miniAOD_Run2022FG.py'
 config.JobType.pluginName = 'Analysis' #or 'PrivateMC' for Monte Calo jobs
-config.JobType.outputFiles = ['mymultilep.root']
+config.JobType.outputFiles = ['mymultilep_Run2022FG.root']
 config.JobType.allowUndistributedCMSSW = True
 
 config.section_('Data')
