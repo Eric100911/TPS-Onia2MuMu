@@ -1,6 +1,7 @@
 test/crabData/crab_*
 test/crabData/crab3_*_MINIAOD*
 *.log
+*.err
 *.root
 *.out
 .vscode
