@@ -562,7 +562,6 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
 	Handle<VertexCollection> recVtxs;
 	iEvent.getByToken(gtprimaryVtxToken_, recVtxs);
 	unsigned int nVtxTrks = 0;
-
 	///////////////////////////////////////////////////////////////////////
 	////////////////Check Lines below for Primary Vertex///////////////////
 	///////////////////////////////////////////////////////////////////////
@@ -645,7 +644,6 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
     #ifdef DISPLAY_STAGE
     puts("Begin muons.");
     #endif
-
 	if (thePATMuonHandle->size() >= 4) // Require at least 4 muons present [Annotated by Eric Wang, 20241214]
 	// JUP->4mu+2K, 改回4
 	{
@@ -988,12 +986,13 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
             // Check if the muon pairs overlap.
 			// Start constructing the fit tree.
 			// Use particlesToVtx() to fit the quarkonia once more.
-			if(isValidUps){
-				// Extract the vertex and the particle parameters from valid results.
-				// Here, when an invalid fit is detected, the massErr is set to -9.
-				extractFitRes(vtxFitTree_Ups, Ups_Fit_noMC, Ups_Vtx_noMC, tmp_Ups_massErr);
-				// Look for "Good Fit". Judge by the massErr.
-				#ifdef DISPLAY_STAGE
+                    isValidUps = particlesToVtx(vtxFitTree_Ups,  muPair_Ups->first,    "final Ups");
+                    if(isValidUps){
+                    // Extract the vertex and the particle parameters from valid results.
+                    // Here, when an invalid fit is detected, the massErr is set to -9.
+                    extractFitRes(vtxFitTree_Ups, Ups_Fit_noMC, Ups_Vtx_noMC, tmp_Ups_massErr);
+                    // Look for "Good Fit". Judge by the massErr.
+		    #ifdef DISPLAY_STAGE
                     puts("Found candidate!");
                     #endif
 
@@ -1045,8 +1044,10 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
 
 	
     // Currently: Event
-	std::cout << "the big circle ended" << endl; //testing segmentation
-		X_One_Tree_->Fill();
+	// std::cout << "the big circle ended" << endl; //testing segmentation
+	if(Ups_mass->size() != 0 || muMatchTrkMark->size() != 0){
+            X_One_Tree_->Fill();
+	}
 	// std::cout << "Finish the part of fitting."  << endl;
 
 	if (Debug_)
@@ -1499,17 +1500,17 @@ bool MultiLepPAT::particlesToVtx(RefCountedKinematicTree&                    arg
                                  const vector<RefCountedKinematicParticle>&  arg_FromParticles,
                                  const string&                               arg_Message){
 	KinematicParticleVertexFitter fitter;
-	std::cout<<"1"<<std::endl;
+	// std::cout<<"1"<<std::endl;
     bool fitError = false;
 
 	double vtxprob = 0;
     try{
         arg_VertexFitTree = fitter.fit(arg_FromParticles);
-		std::cout<<"3"<<std::endl;
+	//	std::cout<<"3"<<std::endl;
     }catch(...){
         fitError = true;
-		std::cout<<"4"<<std::endl;
-		std::cout << "[Fit Error] " << arg_Message <<  std::endl;
+	//	std::cout<<"4"<<std::endl;
+	//	std::cout << "[Fit Error] " << arg_Message <<  std::endl;
     }
 	if (fitError || !arg_VertexFitTree->isValid()){
         return false;
