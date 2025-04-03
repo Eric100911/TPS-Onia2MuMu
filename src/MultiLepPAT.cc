@@ -644,7 +644,7 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
     #ifdef DISPLAY_STAGE
     puts("Begin muons.");
     #endif
-	if (thePATMuonHandle->size() >= 4) // Require at least 4 muons present [Annotated by Eric Wang, 20241214]
+	if (thePATMuonHandle->size() >= 2) // Require at least 4 muons present [Annotated by Eric Wang, 20241214]
 	// JUP->4mu+2K, 改回4
 	{
 		vector<std::string> theInputVariables;
