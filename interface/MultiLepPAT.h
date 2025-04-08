@@ -219,7 +219,7 @@ private:
     // Deal with "multi-candidate" issue
     static double fitResEval(double arg_massDiff_Jpsi_1, double arg_massErr_Jpsi_1,
                              double arg_massDiff_Jpsi_2, double arg_massErr_Jpsi_2,
-                             double arg_massDiff_Ups,    double arg_massErr_Ups   );
+                             double arg_massDiff_Jpsi_3, double arg_massErr_Jpsi_3   );
 
     void DisplayTempBranchInfo() const;
     void Relink();
@@ -342,34 +342,33 @@ private:
     vector<float>  *mupulldXdZ_pos_noArb, *mupulldYdZ_pos_noArb;
     //addition 3,4,5
     vector<float>  *mupulldXdZ_pos_ArbDef, *mupulldYdZ_pos_ArbDef;
-    vector<float>  *mupulldXdZ_pos_ArbST, *mupulldYdZ_pos_ArbST;
+    vector<float>  *mupulldXdZ_pos_ArbST,  *mupulldYdZ_pos_ArbST;
     vector<float>  *mupulldXdZ_pos_noArb_any, *mupulldYdZ_pos_noArb_any;
 
     // Muon pairs from Jpsi and Upsilon [Annotation by Eric Wang, 20240626]
-    vector<float> *Jpsi_cand_mass_p4, *Jpsi_cand_mass_fit,
-                   *Ups_cand_mass_p4,  *Ups_cand_mass_fit;
+    vector<float> *Jpsi_cand_mass_p4, *Jpsi_cand_mass_fit;
 
     // Muons from Jpsi and Upsilon.
     vector<float> *Jpsi_1_mu_1_Idx, *Jpsi_1_mu_2_Idx, 
                   *Jpsi_2_mu_1_Idx, *Jpsi_2_mu_2_Idx,
-                     *Ups_mu_1_Idx,    *Ups_mu_2_Idx;
+                  *Jpsi_3_mu_1_Idx, *Jpsi_3_mu_2_Idx;
 
     // Reconstructed Jpsi and Upsilon.
     vector<float> *Jpsi_1_mass, *Jpsi_1_massErr, *Jpsi_1_massDiff,
                   *Jpsi_2_mass, *Jpsi_2_massErr, *Jpsi_2_massDiff,
-                     *Ups_mass,    *Ups_massErr,    *Ups_massDiff ;
+                  *Jpsi_3_mass, *Jpsi_3_massErr, *Jpsi_3_massDiff ;
                
     vector<float> *Jpsi_1_ctau, *Jpsi_1_ctauErr, *Jpsi_1_Chi2, *Jpsi_1_ndof, *Jpsi_1_VtxProb,
                   *Jpsi_2_ctau, *Jpsi_2_ctauErr, *Jpsi_2_Chi2, *Jpsi_2_ndof, *Jpsi_2_VtxProb,
-                                                    *Ups_Chi2,    *Ups_ndof,    *Ups_VtxProb;
+                  *Jpsi_3_ctau, *Jpsi_3_ctauErr, *Jpsi_3_Chi2, *Jpsi_3_ndof, *Jpsi_3_VtxProb;
                   
     vector<float> *Jpsi_1_phi, *Jpsi_1_eta, *Jpsi_1_pt,
                   *Jpsi_2_phi, *Jpsi_2_eta, *Jpsi_2_pt,
-                     *Ups_phi,    *Ups_eta,    *Ups_pt;
+                  *Jpsi_3_phi, *Jpsi_3_eta, *Jpsi_3_pt;
                
     vector<float> *Jpsi_1_px, *Jpsi_1_py, *Jpsi_1_pz,
                   *Jpsi_2_px, *Jpsi_2_py, *Jpsi_2_pz,
-                     *Ups_px,    *Ups_py,    *Ups_pz;
+                  *Jpsi_3_px, *Jpsi_3_py, *Jpsi_3_pz;
     // Primary vertex reconstructied from Jpsi and Upsilon.              
     vector<float>    *Pri_mass,  *Pri_massErr,
                      *Pri_ctau,  *Pri_ctauErr, *Pri_Chi2, *Pri_ndof, *Pri_VtxProb,
