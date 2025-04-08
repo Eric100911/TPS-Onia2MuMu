@@ -154,6 +154,8 @@ MultiLepPAT::MultiLepPAT(const edm::ParameterSet &iConfig)
 	  MuD0_c(iConfig.getUntrackedParameter<double>("MaxMuD0", 1000)),
 	  JMaxM_c(iConfig.getUntrackedParameter<double>("MaxJPsiMass", 4)),
 	  JMinM_c(iConfig.getUntrackedParameter<double>("MinJPsiMass", 2.2)),
+      YMaxM_c(iConfig.getUntrackedParameter<double>("MaxUpsilonMass", 12.0)),
+      YMinM_c(iConfig.getUntrackedParameter<double>("MinUpsilonMass", 8.0)),
 	  PiSiHits_c(iConfig.getUntrackedParameter<int>("MinNumTrSiHits", 0)),
 	  MuPt_c(iConfig.getUntrackedParameter<double>("MinMuPt", 0)),
 	  JPiPiDR_c(iConfig.getUntrackedParameter<double>("JPsiKKKMaxDR", 1)),
@@ -835,7 +837,7 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
                                                                         chi2, ndof, muMassSigma) );
                     transMuPairId.push_back(iMuon2 - thePATMuonHandle->begin());
                     double muPairMassFromP4 = (iMuon1->p4() + iMuon2->p4()).mass();
-                    isJpsiMuPair = (2 <  muPairMassFromP4 && muPairMassFromP4 < 6);
+                    isJpsiMuPair = (JMinM_c <  muPairMassFromP4 && muPairMassFromP4 < JMaxM_c);
                     if(isJpsiMuPair){
                         if(particlesToVtx(transMuonPair, OniaDecayVtxProbCut_)){
                             muPairCand_Jpsi.push_back(std::make_pair(transMuonPair, transMuPairId) );
