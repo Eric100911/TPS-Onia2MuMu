@@ -195,9 +195,6 @@ MultiLepPAT::MultiLepPAT(const edm::ParameterSet &iConfig)
 	  mupulldXdZ_pos_ArbST(0), mupulldYdZ_pos_ArbST(0),
 	  mupulldXdZ_pos_noArb_any(0), mupulldYdZ_pos_noArb_any(0),
 
-      Jpsi_cand_mass_p4(0), Jpsi_cand_mass_fit(0),
-       Ups_cand_mass_p4(0),  Ups_cand_mass_fit(0),
-
       Jpsi_1_mu_1_Idx(0), Jpsi_1_mu_2_Idx(0),
       Jpsi_2_mu_1_Idx(0), Jpsi_2_mu_2_Idx(0),
 	     Ups_mu_1_Idx(0),    Ups_mu_2_Idx(0),
@@ -1113,7 +1110,7 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
         puts("Quarkonia Fitting Section ends");
     }
     // Currently: Event
-	if (Pri_VtxProb->size() > 0 || doMC || Jpsi_cand_mass_p4->size() > 0 || Ups_cand_mass_p4->size() > 0)
+	if (Pri_VtxProb->size() > 0 || doMC)
 	{
 		X_One_Tree_->Fill();
 	}
@@ -1268,12 +1265,6 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
 	muIsPatTightMuon->clear();
 	muIsPatSoftMuon->clear();
 	muIsPatMediumMuon->clear();
-
-    Jpsi_cand_mass_p4->clear();
-    Jpsi_cand_mass_fit->clear();
-    Ups_cand_mass_p4->clear();
-    Ups_cand_mass_fit->clear();
-
 
     Pri_mass->clear();
     Pri_massErr->clear();
@@ -1978,11 +1969,6 @@ void MultiLepPAT::beginJob()
 	X_One_Tree_->Branch("mupulldYdZ_pos_ArbST", &mupulldYdZ_pos_ArbST);
 	X_One_Tree_->Branch("mupulldXdZ_pos_noArb_any", &mupulldXdZ_pos_noArb_any);
 	X_One_Tree_->Branch("mupulldYdZ_pos_noArb_any", &mupulldYdZ_pos_noArb_any);
-
-    X_One_Tree_->Branch("Jpsi_cand_mass_p4", &Jpsi_cand_mass_p4);
-    X_One_Tree_->Branch("Jpsi_cand_mass_fit", &Jpsi_cand_mass_fit);
-    X_One_Tree_->Branch("Ups_cand_mass_p4", &Ups_cand_mass_p4);
-    X_One_Tree_->Branch("Ups_cand_mass_fit", &Ups_cand_mass_fit);
 
     X_One_Tree_->Branch("Jpsi_1_mass", &Jpsi_1_mass);
     X_One_Tree_->Branch("Jpsi_1_massErr", &Jpsi_1_massErr);
