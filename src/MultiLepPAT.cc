@@ -152,6 +152,8 @@ MultiLepPAT::MultiLepPAT(const edm::ParameterSet &iConfig)
 	  MuSiHits_c(iConfig.getUntrackedParameter<int>("MinNumMuSiHits", 0)),
 	  MuNormChi_c(iConfig.getUntrackedParameter<double>("MaxMuNormChi2", 1000)),
 	  MuD0_c(iConfig.getUntrackedParameter<double>("MaxMuD0", 1000)),
+      MuMatchTrkMomentumAbsDiffThr_c(iConfig.getUntrackedParameter<double>("MuMatchTrkMomentumAbsDiffThr", 0.5)),
+      MuMatchTrkMomentumRelDiffThr_c(iConfig.getUntrackedParameter<double>("MuMatchTrkMomentumRelDiffThr", 0.5)),
 	  JMaxM_c(iConfig.getUntrackedParameter<double>("MaxJPsiMass", 4)),
 	  JMinM_c(iConfig.getUntrackedParameter<double>("MinJPsiMass", 2.2)),
 	  PiSiHits_c(iConfig.getUntrackedParameter<int>("MinNumTrSiHits", 0)),
@@ -188,6 +190,7 @@ MultiLepPAT::MultiLepPAT(const edm::ParameterSet &iConfig)
       muIsJpsiFilterMatch(0), muIsUpsFilterMatch(0),
 
 	  muIsPatLooseMuon(0), muIsPatTightMuon(0), muIsPatSoftMuon(0), muIsPatMediumMuon(0),
+      muFromPV(0),         muPVAssocQuality(0),
 
 	  muMVAMuonID(0), musegmentCompatibility(0),
 	  mupulldXdZ_pos_noArb(0), mupulldYdZ_pos_noArb(0),
@@ -665,6 +668,10 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
 		    int goodLooseMuonNew = 0;
 		    int goodLooseMuon = 0;
 		    int goodTightMuon = 0;
+
+            unsigned int curFromPV = 0;
+            unsigned int curPVAssocQuality = 0;
+            double curMuonMomentum = sqrt(iMuonP->px() * iMuonP->px() + iMuonP->py() * iMuonP->py() + iMuonP->pz() * iMuonP->pz());
     
     
 		    // Find and delete muon Tracks in PionTracks
@@ -678,21 +685,25 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
 		    	    }
 		    	    edm::View<pat::PackedCandidate>::const_iterator iTrackf = *(iTrackfID);		
 
-                    // Why call the function outside? [Question from Eric Wang, 20240704]
-		    	    iMuonP->track()->px();
-
-                    // Match using the momentum. [Annotated by Eric Wang, 20240704]                  
-		    	    if (   iTrackf->px() == iMuonP->track()->px() 
-                        && iTrackf->py() == iMuonP->track()->py() 
-                        && iTrackf->pz() == iMuonP->track()->pz()) {
-		    	    	nonMuonPionTrack.erase(iTrackfID);
-		    	    	iTrackfID = iTrackfID - 1;
-		    	    }
+                    // Match using the momentum. Allowing a relative error. [Annotated by Eric Wang, 20240704]
+                    if (fabs(iTrackf->px() - iMuonP->px()) < MuMatchTrkMomentumRelDiffThr_c * curMuonMomentum && 
+                        fabs(iTrackf->py() - iMuonP->py()) < MuMatchTrkMomentumRelDiffThr_c * curMuonMomentum && 
+                        fabs(iTrackf->pz() - iMuonP->pz()) < MuMatchTrkMomentumRelDiffThr_c * curMuonMomentum)
+                    {
+                        nonMuonPionTrack.erase(iTrackfID);
+                        curFromPV = iTrackf->fromPV();
+                        curPVAssocQuality = iTrackf->pvAssociationQuality();
+                        break;
+                    }
+		    	    
                 } catch(...){
                     continue;
                 }
 		    }
 		    // float mymuMVABs = -1;
+
+            muFromPV->push_back(curFromPV);
+            muPVAssocQuality->push_back(curPVAssocQuality);
 
             // Check if match any HLT for Jpsi and Upsilon [Annotated by Eric Wang, 20240704]
             // TO_ENC [Tagged by Eric Wang, 20240704]
@@ -1953,6 +1964,9 @@ void MultiLepPAT::beginJob()
 	X_One_Tree_->Branch("muIsPatTightMuon", &muIsPatTightMuon);
 	X_One_Tree_->Branch("muIsPatSoftMuon", &muIsPatSoftMuon);
 	X_One_Tree_->Branch("muIsPatMediumMuon", &muIsPatMediumMuon);
+
+    X_One_Tree_->Branch("muFromPV", &muFromPV);
+    X_One_Tree_->Branch("muPVAssocQuantity", &muPVAssocQuantity);
 
 	X_One_Tree_->Branch("muIsJpsiTrigMatch", &muIsJpsiTrigMatch);
 	X_One_Tree_->Branch("muIsUpsTrigMatch", &muIsUpsTrigMatch);

@@ -242,6 +242,8 @@ private:
     int     MuSiHits_c;
     double  MuNormChi_c;
     double  MuD0_c;
+    double  MuMatchTrkMomentumAbsDiffThr_c;
+    double  MuMatchTrkMomentumRelDiffThr_c;
 
     // Limits for secondary particles [Annotation by Eric Wang, 20240626]
     
@@ -332,6 +334,7 @@ private:
                         *muIsUpsTrigMatch,          *munMatchedSeg;
     vector<int>         *muIsJpsiFilterMatch,       *muIsUpsFilterMatch;
     vector<int>         *muIsPatLooseMuon, *muIsPatTightMuon, *muIsPatSoftMuon, *muIsPatMediumMuon;
+    vector<int>         *muFromPV,         *muPVAssocQuality;
     
     //for Maksat trigger match [Annotation by Eric Wang, 20240626]
     vector<int> *muUpsVrtxMatch, *muL3TriggerMatch;
