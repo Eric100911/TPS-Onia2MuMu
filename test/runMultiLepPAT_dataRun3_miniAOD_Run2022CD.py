@@ -293,7 +293,7 @@ FiltersForUpsilon = cms.untracked.vstring("hltVertexmumuFilterUpsilonMuon"),
 #        FiltersForUpsilon = cms.untracked.vstring("hltVertexmumuFilterUpsilonMuon","hltVertexmumuFilterUpsilonMuon","hltVertexmumuFilterUpsilonMuo$
  
         Chi2NDF_Track =  cms.untracked.double(15.0),
-        OniaDecayVtxProbCut = cms.untracked.double(0.01)
+        OniaDecayVtxProbCut = cms.untracked.double(0.005)
 )
 
 # process.mkcands = cms.EDAnalyzer('Bfinder',

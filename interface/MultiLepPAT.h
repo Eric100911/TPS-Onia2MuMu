@@ -329,7 +329,8 @@ private:
 
     // all muons: selection result [Annotation by Eric Wang, 20240626]
     vector<int>         *muIsGoodLooseMuon,         *muIsGoodLooseMuonNew, 
-                        *muIsGoodSoftMuonNewIlse,   *muIsGoodSoftMuonNewIlseMod, 
+                        *muIsGoodSoftMuonNewIlse,   *muIsGoodSoftMuonNewIlseMod,
+                        *muIsGlobalMuon, 
                         *muIsGoodTightMuon,         *muIsJpsiTrigMatch,         
                         *muIsUpsTrigMatch,          *munMatchedSeg;
     vector<int>         *muIsJpsiFilterMatch,       *muIsUpsFilterMatch;
