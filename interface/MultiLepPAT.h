@@ -249,6 +249,8 @@ private:
     
     double JMaxM_c;
     double JMinM_c;
+    double YMaxM_c;
+    double YMinM_c;
     int PiSiHits_c;
     double MuPt_c;
     double JPiPiDR_c;

@@ -156,6 +156,8 @@ MultiLepPAT::MultiLepPAT(const edm::ParameterSet &iConfig)
       MuMatchTrkMomentumRelDiffThr_c(iConfig.getUntrackedParameter<double>("MuMatchTrkMomentumRelDiffThr", 0.5)),
 	  JMaxM_c(iConfig.getUntrackedParameter<double>("MaxJPsiMass", 4)),
 	  JMinM_c(iConfig.getUntrackedParameter<double>("MinJPsiMass", 2.2)),
+      YMaxM_c(iConfig.getUntrackedParameter<double>("MaxUpsMass", 12)),
+      YMinM_c(iConfig.getUntrackedParameter<double>("MinUpsMass", 8)),
 	  PiSiHits_c(iConfig.getUntrackedParameter<int>("MinNumTrSiHits", 0)),
 	  MuPt_c(iConfig.getUntrackedParameter<double>("MinMuPt", 0)),
 	  JPiPiDR_c(iConfig.getUntrackedParameter<double>("JPsiKKKMaxDR", 1)),
@@ -910,8 +912,8 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
                                                                         chi2, ndof, muMassSigma) );
                     transMuPairId.push_back(iMuon2 - thePATMuonHandle->begin());
                     double muPairMassFromP4 = (iMuon1->p4() + iMuon2->p4()).mass();
-                    isJpsiMuPair = (2 <  muPairMassFromP4 && muPairMassFromP4 < 6);
-                    isUpsMuPair  = (8 <  muPairMassFromP4 && muPairMassFromP4 < 12);
+                    isJpsiMuPair = (JMinM_c <  muPairMassFromP4 && muPairMassFromP4 < JMaxM_c);
+                    isUpsMuPair  = (YMinM_c <  muPairMassFromP4 && muPairMassFromP4 < YMaxM_c);
                     // isJpsiMuPair = true;
                     // isUpsMuPair  = true;
                     if(isJpsiMuPair || isUpsMuPair){
@@ -985,7 +987,7 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
     // Markers for fitting. Only marks if a result is constructed
     bool isValidJpsi_1, isValidJpsi_2, isValidUps, isValidPri;
     // Receive status value from extractFitRes()
-    bool isValidFitRes_Jpsi_1, isValidFitRes_Jpsi_2, isValidFitRes_Ups, isValidFitRes_Pri = false;
+    bool isValidFitRes_Jpsi_1, isValidFitRes_Jpsi_2, isValidFitRes_Ups, isValidFitRes_Pri;
     // Fitted mass error is also stricter marker for fitting.
     double tmp_Jpsi_1_massErr, tmp_Jpsi_2_massErr, tmp_Ups_massErr, tmp_Pri_massErr;
 
@@ -1006,6 +1008,7 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
                 }
                 // Initialize the marker for primary vertex
                 isValidPri = false;
+                isValidFitRes_Pri = false;
                 // Start constructing the fit tree.
                 // Use particlesToVtx() to fit the quarkonia once more.
                 isValidJpsi_1 = particlesToVtx(vtxFitTree_Jpsi_1, muPair_Jpsi_1->first, "final Jpsi_1", OniaDecayVtxProbCut_);
@@ -1059,20 +1062,20 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
                             if (Debug_){
                                 puts("A Bad Fit!");
                             }
-                            // Use -9.0 to indicate a bad fit.
-                            Pri_mass->push_back(-9.0);
-                            Pri_massErr->push_back(-9.0);
-                            Pri_ctau->push_back(-9.0);
-                            Pri_ctauErr->push_back(-9.0);
-                            Pri_VtxProb->push_back(-9.0);
-                            Pri_Chi2->push_back(-9.0);
-                            Pri_ndof->push_back(-9.0);
-                            Pri_px->push_back(-9.0);
-                            Pri_py->push_back(-9.0);
-                            Pri_pz->push_back(-9.0);
-                            Pri_phi->push_back(-9.0);
-                            Pri_eta->push_back(-9.0);
-                            Pri_pt->push_back(-9.0);
+                            // Use -999999.0 to indicate a bad fit.
+                            Pri_mass->push_back(-999999.0);
+                            Pri_massErr->push_back(-999999.0);
+                            Pri_ctau->push_back(-999999.0);
+                            Pri_ctauErr->push_back(-999999.0);
+                            Pri_VtxProb->push_back(-999999.0);
+                            Pri_Chi2->push_back(-999999.0);
+                            Pri_ndof->push_back(-999999.0);
+                            Pri_px->push_back(-999999.0);
+                            Pri_py->push_back(-999999.0);
+                            Pri_pz->push_back(-999999.0);
+                            Pri_phi->push_back(-999999.0);
+                            Pri_eta->push_back(-999999.0);
+                            Pri_pt->push_back(-999999.0);
                         }
                         // Store the Jpsi 1 fitting results.
                         // getDynamics(Jpsi_1_Fit_noMC, tmp_pt, tmp_eta, tmp_phi);
