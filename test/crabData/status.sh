@@ -4,7 +4,7 @@ echo '-------------------------** Crab Report **-------------------------' > rep
 for i in crab_crab3_triOniaVtxValid*
 do
 	sed -i -e '$a\'"${i}" report.out
-	crab status $i | sed -n -e '/running/p' -e '/jobs failed/p' > tmp_report.out
+	crab status -d $i | sed -n -e '/running/p' -e '/jobs failed/p' > tmp_report.out
 	cat tmp_report.out | while read rows
 	do
 		sed -i -e '$a\'"${rows}" report.out	
