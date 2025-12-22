@@ -4,7 +4,7 @@
 # project config
 dataList='Run2023dataList.txt'
 template='crab3_template.py'
-fileName='crab3'
+fileName='crab3_triOniaVtxValid'
 scriptName='submit.sh'
 
 # Allow parsing from user input in command line

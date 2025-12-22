@@ -31,7 +31,6 @@
 #include "DataFormats/PatCandidates/interface/PackedCandidate.h" // xining MINIAODtest
 
 // user include files
-#include "../interface/VertexReProducer.h"
 
 #include "FWCore/Framework/interface/Frameworkfwd.h"
 #include "FWCore/Framework/interface/one/EDAnalyzer.h"
@@ -181,12 +180,24 @@ private:
                                  const MagneticField&                        arg_bField,
                                  const TrackRef arg_Trk1,     const TrackRef arg_Trk2       );
 
+    // Fitting particles to a vertex, only requiring a "valid" fit.
     static bool particlesToVtx(const vector<RefCountedKinematicParticle>&  arg_MuonResults);
     static bool particlesToVtx(const vector<RefCountedKinematicParticle>&  arg_MuonResults,
                                const string&                               arg_Message);
     static bool particlesToVtx(RefCountedKinematicTree&                    arg_VertexFitTree,
                                const vector<RefCountedKinematicParticle>&  arg_Muons,
                                const string&                               arg_Message);
+
+    // Fitting particles to a vertex, requiring some vertex probability cut.
+    static bool particlesToVtx(const vector<RefCountedKinematicParticle>&  arg_MuonResults,
+            const double&                               arg_VtxProbCut);
+    static bool particlesToVtx(const vector<RefCountedKinematicParticle>&  arg_MuonResults,
+            const string&                               arg_Message,
+            const double&                               arg_VtxProbCut);
+    static bool particlesToVtx(RefCountedKinematicTree&                    arg_VertexFitTree,
+            const vector<RefCountedKinematicParticle>&  arg_Muons,
+            const string&                               arg_Message,
+            const double&                               arg_VtxProbCut);
 
     static bool extractFitRes(RefCountedKinematicTree&     arg_VtxTree,
                               RefCountedKinematicParticle& res_Part,
@@ -210,6 +221,8 @@ private:
                              double arg_massDiff_Ups, double arg_massErr_Ups,
                              double arg_massDiff_Phi,    double arg_massErr_Phi   );
 
+    void DisplayTempBranchInfo() const;
+    void Relink();
     
     // Member data
 
@@ -266,6 +279,8 @@ private:
     bool Debug_;
     double Chi_Track_;
 
+    double OniaDecayVtxProbCut_;
+
     // PDG 2023
 	static constexpr double myJpsiMass = 3.0969,   myJpsiMassErr = 0.00004;
 	static constexpr double myUpsMass  = 9.4603,   myUpsMassErr  = 0.0003;
@@ -319,7 +334,6 @@ private:
                         *muIsUpsTrigMatch,          *munMatchedSeg;
     vector<int>         *muIsJpsiFilterMatch,       *muIsUpsFilterMatch;
     vector<int>         *muIsPatLooseMuon, *muIsPatTightMuon, *muIsPatSoftMuon, *muIsPatMediumMuon;
-    vector<int>         *muIsJpsiFilterMatch,       *muIsUpsFilterMatch;
 
     //for Maksat trigger match [Annotation by Eric Wang, 20240626]
     vector<int> *muUpsVrtxMatch, *muL3TriggerMatch;
@@ -365,11 +379,6 @@ private:
                      *Pri_phi,   *Pri_eta,   *Pri_pt;
 
     // Branches for the supposed kaon tracks from Phi decay.
-    vector<float>        *Phi_K_1_px, *Phi_K_1_py, *Phi_K_1_pz,
-                         *Phi_K_2_px, *Phi_K_2_py, *Phi_K_2_pz,
-                         *Phi_K_1_eta, *Phi_K_1_phi, *Phi_K_1_pt,
-                         *Phi_K_2_eta, *Phi_K_2_phi, *Phi_K_2_pt;  
-
     vector<float>        *Phi_K_1_px, *Phi_K_1_py, *Phi_K_1_pz,
                          *Phi_K_2_px, *Phi_K_2_py, *Phi_K_2_pz,
                          *Phi_K_1_eta, *Phi_K_1_phi, *Phi_K_1_pt,

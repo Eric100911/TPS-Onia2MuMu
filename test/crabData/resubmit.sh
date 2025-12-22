@@ -1,5 +1,5 @@
 #!/bin/bash
-files='crab_crab3_*_*'
+files='crab_crab3_triOniaVtxValid*_*'
 #for i in $files
 #do
 	#echo -e "\033[32m $i \033[0m"
