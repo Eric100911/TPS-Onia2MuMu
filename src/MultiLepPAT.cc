@@ -207,8 +207,6 @@ MultiLepPAT::MultiLepPAT(const edm::ParameterSet &iConfig)
 	  mupulldXdZ_pos_ArbST(0), mupulldYdZ_pos_ArbST(0),
 	  mupulldXdZ_pos_noArb_any(0), mupulldYdZ_pos_noArb_any(0),
 
-	  Jpsi_cand_mass_p4(0), Jpsi_cand_mass_fit(0),
-
       Jpsi_mu_1_Idx(0), Jpsi_mu_2_Idx(0),
        Ups_mu_1_Idx(0),    Ups_mu_2_Idx(0),
 	    Phi_K_1_Idx(0),     Phi_K_2_Idx(0),
@@ -311,7 +309,7 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
 {
 	
 
-    std::cout<<"Load the MC results [Annotated by Eric Wang, 20240704]"<<std::endl;
+    // std::cout<<"Load the MC results [Annotated by Eric Wang, 20240704]"<<std::endl;
 
 	TLorentzVector MC_mu1p4, MC_mu2p4, MC_mu3p4, MC_mu4p4, MC_pi1p4, MC_pi2p4;
 	if (doMC)
@@ -701,8 +699,8 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
             unsigned int curPVAssocQuality = 0;
             double curMuonMomentum = sqrt(iMuonP->px() * iMuonP->px() + iMuonP->py() * iMuonP->py() + iMuonP->pz() * iMuonP->pz());
 			// Find and delete muon Tracks in Tracks
-			for (std::vector<edm::View<pat::PackedCandidate>::const_iterator>::const_iterator iTrackfID  = nonMuonPionTrack.begin(); // MINIAOD
-			                                                                                  iTrackfID != nonMuonPionTrack.end(); 
+			for (std::vector<edm::View<pat::PackedCandidate>::const_iterator>::const_iterator iTrackfID  = nonMuonKaonTrack.begin(); // MINIAOD
+			                                                                                  iTrackfID != nonMuonKaonTrack.end(); 
 
                                                                                             ++iTrackfID                             )
 			{
@@ -718,7 +716,7 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
                         fabs(iTrackf->pz() - iMuonP->pz()) < MuMatchTrkMomentumRelDiffThr_c * curMuonMomentum &&
                              iTrackf->charge()             == iMuonP->charge())
                     {
-                        nonMuonPionTrack.erase(iTrackfID);
+                        nonMuonKaonTrack.erase(iTrackfID);
                         curFromPV = iTrackf->fromPV();
                         curPVAssocQuality = iTrackf->pvAssociationQuality();
 						iTrackfID = iTrackfID - 1;
@@ -866,8 +864,8 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
     std::vector<uint>                        transMuPairId;
     ParticleMass muMass = myMuMass;
     float muMassSigma   = myMuMassErr;
-	ParticleMass kaonMass = myKaonMass;
-	float kaonMassSigma = myKaonMassErr;
+	ParticleMass kaonMass = myKMass;
+	float kaonMassSigma = myKMassErr;
     float chi2 = 0.;
 	float ndof = 0.;
 
@@ -955,7 +953,7 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
             transMuPairId.push_back(iMuon2 - thePATMuonHandle->begin());
             // Judging with vertex fitting.
 			isGoodVtxFit = particlesToVtx(transMuonPair, OniaDecayVtxProbCut_);
-            if(isGoodVtxFit) {
+            if(isGoodVtxFit && isInOniaEtaRange){ // Only apply the vertex fit cut for those in the eta range. This is to save some computing power, as the vertex fit is time-consuming.{
 				// Passing all the checks, store the muon pair as pairs of RefCountedKinematicParticle.
 				if(isJpsiMuPair){
 					// Store the muon pair as RefCountedKinematicParticle.
@@ -1075,14 +1073,14 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
     std::vector< KList_t > KPairCand_Phi;
 
 	// std::cout << "Start the part of track pair."  << endl;
-	// std::cout << "the number of track" << nonMuonPionTrack.size() << endl;
+	// std::cout << "the number of track" << nonMuonKaonTrack.size() << endl;
 
     #ifdef DISPLAY_STAGE
     puts("Producing track pair.");
     #endif
 
     // Selection for the Phi candidates
-    for(auto iTrack1ID = nonMuonPionTrack.begin(); iTrack1ID != nonMuonPionTrack.end(); ++iTrack1ID){
+    for(auto iTrack1ID = nonMuonKaonTrack.begin(); iTrack1ID != nonMuonKaonTrack.end(); ++iTrack1ID){
 		edm::View<pat::PackedCandidate>::const_iterator iTrack1 = *(iTrack1ID);
 		if (!iTrack1->hasTrackDetails() || iTrack1->charge() == 0)
 		{
@@ -1100,10 +1098,10 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
         // Build transient track and store.
         TransientTrack trackTT1(*(iTrack1->bestTrack()), &(bFieldHandle));
         transTrackPair.push_back(PhiFactory.particle(trackTT1, KMass, chi2, ndof, KMassSigma));
-        transTrackPairId.push_back(iTrack1ID - nonMuonPionTrack.begin());
+        transTrackPairId.push_back(iTrack1ID - nonMuonKaonTrack.begin());
 
         // Next muon candidate.
-        for(auto iTrack2ID = iTrack1ID + 1; iTrack2ID != nonMuonPionTrack.end(); ++iTrack2ID){
+        for(auto iTrack2ID = iTrack1ID + 1; iTrack2ID != nonMuonKaonTrack.end(); ++iTrack2ID){
             // DEBUG: display current muon pair.
             // Build transient track and store.
             edm::View<pat::PackedCandidate>::const_iterator iTrack2 = *(iTrack2ID);
@@ -1150,7 +1148,7 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
                 continue;
             }
             transTrackPair.push_back(PhiFactory.particle(trackTT2,  KMass, chi2, ndof, KMassSigma) );
-            transTrackPairId.push_back(iTrack2ID - nonMuonPionTrack.begin());
+            transTrackPairId.push_back(iTrack2ID - nonMuonKaonTrack.begin());
 
             // Passing all the checks, store the track pair.
             // Note here that transTrackPair is a vector of RefCountedKinematicParticle.
@@ -1339,24 +1337,24 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
                     //               an iterator pointing to the pat::PackedCandidate.
                     
                     // Kaon 1
-                    Phi_K_1_px->push_back(nonMuonPionTrack[KPair_Phi->second[0]]->px());
-                    Phi_K_1_py->push_back(nonMuonPionTrack[KPair_Phi->second[0]]->py());
-                    Phi_K_1_pz->push_back(nonMuonPionTrack[KPair_Phi->second[0]]->pz());
-                    Phi_K_1_pt->push_back(nonMuonPionTrack[KPair_Phi->second[0]]->pt());
-                    Phi_K_1_eta->push_back(nonMuonPionTrack[KPair_Phi->second[0]]->eta());
-                    Phi_K_1_phi->push_back(nonMuonPionTrack[KPair_Phi->second[0]]->phi());
-					Phi_K_1_fromPV->push_back(nonMuonPionTrack[KPair_Phi->second[0]]->fromPV());
-					Phi_K_1_pvAssocQuality->push_back(nonMuonPionTrack[KPair_Phi->second[0]]->pvAssociationQuality());
+                    Phi_K_1_px->push_back(nonMuonKaonTrack[KPair_Phi->second[0]]->px());
+                    Phi_K_1_py->push_back(nonMuonKaonTrack[KPair_Phi->second[0]]->py());
+                    Phi_K_1_pz->push_back(nonMuonKaonTrack[KPair_Phi->second[0]]->pz());
+                    Phi_K_1_pt->push_back(nonMuonKaonTrack[KPair_Phi->second[0]]->pt());
+                    Phi_K_1_eta->push_back(nonMuonKaonTrack[KPair_Phi->second[0]]->eta());
+                    Phi_K_1_phi->push_back(nonMuonKaonTrack[KPair_Phi->second[0]]->phi());
+					Phi_K_1_fromPV->push_back(nonMuonKaonTrack[KPair_Phi->second[0]]->fromPV());
+					Phi_K_1_pvAssocQuality->push_back(nonMuonKaonTrack[KPair_Phi->second[0]]->pvAssociationQuality());
 
                     // Kaon 2
-                    Phi_K_2_px->push_back(nonMuonPionTrack[KPair_Phi->second[1]]->px());
-                    Phi_K_2_py->push_back(nonMuonPionTrack[KPair_Phi->second[1]]->py());
-                    Phi_K_2_pz->push_back(nonMuonPionTrack[KPair_Phi->second[1]]->pz());
-                    Phi_K_2_pt->push_back(nonMuonPionTrack[KPair_Phi->second[1]]->pt());
-                    Phi_K_2_eta->push_back(nonMuonPionTrack[KPair_Phi->second[1]]->eta());
-                    Phi_K_2_phi->push_back(nonMuonPionTrack[KPair_Phi->second[1]]->phi());
-					Phi_K_2_fromPV->push_back(nonMuonPionTrack[KPair_Phi->second[1]]->fromPV());
-					Phi_K_2_pvAssocQuality->push_back(nonMuonPionTrack[KPair_Phi->second[1]]->pvAssociationQuality());
+                    Phi_K_2_px->push_back(nonMuonKaonTrack[KPair_Phi->second[1]]->px());
+                    Phi_K_2_py->push_back(nonMuonKaonTrack[KPair_Phi->second[1]]->py());
+                    Phi_K_2_pz->push_back(nonMuonKaonTrack[KPair_Phi->second[1]]->pz());
+                    Phi_K_2_pt->push_back(nonMuonKaonTrack[KPair_Phi->second[1]]->pt());
+                    Phi_K_2_eta->push_back(nonMuonKaonTrack[KPair_Phi->second[1]]->eta());
+                    Phi_K_2_phi->push_back(nonMuonKaonTrack[KPair_Phi->second[1]]->phi());
+					Phi_K_2_fromPV->push_back(nonMuonKaonTrack[KPair_Phi->second[1]]->fromPV());
+					Phi_K_2_pvAssocQuality->push_back(nonMuonKaonTrack[KPair_Phi->second[1]]->pvAssociationQuality());
 
 					#ifdef SHOW_DEBUG
 					std::cout << "finish get all the particles" << endl;
@@ -1372,7 +1370,7 @@ void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetu
 
 	
     // Currently: Event
-	std::cout << "the big circle ended" << endl; //testing segmentation
+	// std::cout << "the big circle ended" << endl; //testing segmentation
 	if (Pri_VtxProb->size() > 0 || doMC)
 	{
 		X_One_Tree_->Fill();
@@ -2349,9 +2347,6 @@ void MultiLepPAT::beginJob()
 	X_One_Tree_->Branch("mupulldYdZ_pos_ArbST", &mupulldYdZ_pos_ArbST);
 	X_One_Tree_->Branch("mupulldXdZ_pos_noArb_any", &mupulldXdZ_pos_noArb_any);
 	X_One_Tree_->Branch("mupulldYdZ_pos_noArb_any", &mupulldYdZ_pos_noArb_any);
-
-	X_One_Tree_->Branch("Jpsi_cand_mass_p4", &Jpsi_cand_mass_p4);
-    X_One_Tree_->Branch("Jpsi_cand_mass_fit", &Jpsi_cand_mass_fit);
 
     X_One_Tree_->Branch("Jpsi_mass", &Jpsi_mass);
     X_One_Tree_->Branch("Jpsi_massErr", &Jpsi_massErr);

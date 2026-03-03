@@ -336,7 +336,6 @@ private:
                         *muIsUpsTrigMatch,          *munMatchedSeg;
     vector<int>         *muIsJpsiFilterMatch,       *muIsUpsFilterMatch;
     vector<int>         *muIsPatLooseMuon, *muIsPatTightMuon, *muIsPatSoftMuon, *muIsPatMediumMuon;
-    vector<int>         *muIsJpsiFilterMatch,       *muIsUpsFilterMatch;
 
     vector<int>         *muFromPV,         *muPVAssocQuality;
     //for Maksat trigger match [Annotation by Eric Wang, 20240626]
@@ -386,12 +385,7 @@ private:
                          *Phi_K_1_eta, *Phi_K_1_phi, *Phi_K_1_pt,
                          *Phi_K_2_eta, *Phi_K_2_phi, *Phi_K_2_pt,
                          *Phi_K_1_fromPV, *Phi_K_2_fromPV,
-                         *Phi_K_1_pvAssocQuality, *Phi_K_2_pvAssocQuality;  
-
-    vector<float>        *Phi_K_1_px, *Phi_K_1_py, *Phi_K_1_pz,
-                         *Phi_K_2_px, *Phi_K_2_py, *Phi_K_2_pz,
-                         *Phi_K_1_eta, *Phi_K_1_phi, *Phi_K_1_pt,
-                         *Phi_K_2_eta, *Phi_K_2_phi, *Phi_K_2_pt;  
+                         *Phi_K_1_pvAssocQuality, *Phi_K_2_pvAssocQuality;
 
     //doMC
     vector<float> 
