@@ -5,8 +5,8 @@ ivars = VarParsing.VarParsing('analysis')
 ivars.inputFiles=(
 #'file:BPHSkim_UL.root',
 #'/store/user/zhenhu/MuOnia/BPHSkim-v3-Run2018D-12Nov2019_UL2018-v1/210321_010747/0000/BPHSkim_UL_556.root',
-'/store/data/Run2023D/ParkingDoubleMuonLowMass0/MINIAOD/PromptReco-v1/000/369/943/00000/71474bf3-874d-4058-b84c-9111ea2770b4.root'
-
+#'/store/data/Run2024C/ParkingDoubleMuonLowMass0/MINIAOD/PromptReco-v1/000/379/415/00000/b40397b5-61c6-4887-8f4e-025e8ca925ee.root'
+'/store/data/Run2024I/ParkingDoubleMuonLowMass7/MINIAOD/PromptReco-v1/000/386/604/00000/ee22c421-8e3a-4088-a442-6f8327754889.root'
 )
 
 ivars.outputFile='mymultilep.root'
@@ -76,13 +76,14 @@ if runOnMC:
 else:
 #    process.GlobalTag = GlobalTag(process.GlobalTag, '102X_dataRun2_v12', '')
     #process.GlobalTag = GlobalTag(process.GlobalTag, '132X_dataRun3_Prompt_v4', '')
-    process.GlobalTag = GlobalTag(process.GlobalTag, '130X_dataRun3_PromptAnalysis_v1', '') 
+    process.GlobalTag = GlobalTag(process.GlobalTag, '140X_dataRun3_Prompt_v4', '') 
 ### PoolSource will be ignored when running crab
+# 19Jan2025 chiw ("Eric"): The annotation above is SUS! Trying to remove the "eventsToProcess".
+# 21Jan2025 chiw ("Eric"): The 'eventsToProcess' will limit the range of events to be processed. The 'fileNames' will be ignored.
 process.source = cms.Source("PoolSource",
     skipEvents=cms.untracked.uint32(0),
 	fileNames = cms.untracked.vstring(ivars.inputFiles),
-	#eventsToProcess = cms.untracked.VEventRange("369943:141533880-369943:MAX")
-	#eventsToProcess = cms.untracked.VEventRange("367079:970546777")
+	eventsToProcess = cms.untracked.VEventRange("386604:912553303")
 )
 
 ### Set basic filter
@@ -275,27 +276,36 @@ TriggersForJpsi = cms.untracked.vstring("HLT_Dimuon0_Jpsi3p5_Muon2_v",
 										"HLT_DoubleMu4_3_LowMass_v"),
  FiltersForJpsi = cms.untracked.vstring("hltVertexmumuFilterJpsiMuon3p5",
 										"hltDisplacedmumuFilterDoubleMu43LowMass"),
+
 #TriggersForUpsilon = cms.untracked.vstring("HLT_Dimuon0_Upsilon_Muon_v18","HLT_Dimuon0_Upsilon_Muon_v17","HLT_Dimuon0_Upsilon_Muon_v16","HLT_Dimuon0_Upsilon_Muon_v15","HLT_Dimuon0_Upsilon_Muon_v14","HLT_Dimuon0_Upsilon_Muon_v13","HLT_Dimuon0_Upsilon_Muon_v12","HLT_Dimuon0_Upsilon_Muon_v11","HLT_Dimuon0_Upsilon_Muon_v10","HLT_Dimuon0_Upsilon_Muon_v9","HLT_Dimuon0_Upsilon_Muon_v8","HLT_Dimuon0_Upsilon_Muon_v7","HLT_Dimuon0_Upsilon_Muon_v6","HLT_Dimuon0_Upsilon_Muon_v5","HLT_Dimuon0_Upsilon_Muon_v4","HLT_Dimuon0_Upsilon_Muon_v3","HLT_Dimuon0_Upsilon_Muon_v2","HLT_Dimuon0_Upsilon_Muon_v1"),
 #FiltersForUpsilon = cms.untracked.vstring("hltVertexmumuFilterUpsilonMuon","hltVertexmumuFilterUpsilonMuon","hltVertexmumuFilterUpsilonMuon","hltVertexmumuFilterUpsilonMuon","hltVertexmumuFilterUpsilonMuon","hltVertexmumuFilterUpsilonMuon","hltVertexmumuFilterUpsilonMuon","hltVertexmumuFilterUpsilonMuon","hltVertexmumuFilterUpsilonMuon","hltVertexmumuFilterUpsilonMuon","hltVertexmumuFilterUpsilonMuon","hltVertexmumuFilterUpsilonMuon","hltVertexmumuFilterUpsilonMuon","hltVertexmumuFilterUpsilonMuon","hltVertexmumuFilterUpsilonMuon","hltVertexmumuFilterUpsilonMuon","hltVertexmumuFilterUpsilonMuon","hltVertexmumuFilterUpsilonMuon"),
 
 TriggersForUpsilon = cms.untracked.vstring("HLT_Trimuon5_3p5_2_Upsilon_Muon_v"),
+FiltersForUpsilon = cms.untracked.vstring("hltVertexmumuFilterUpsilonMuon"),
+
+
+#        TriggersForJpsi = cms.untracked.vstring("HLT_Dimuon0_Jpsi_Muon_v18","HLT_Dimuon0_Jpsi_Muon_v17","HLT_Dimuon0_Jpsi_Muon_v16","HLT_Dimuon0_J$
 #        FiltersForJpsi = cms.untracked.vstring("hltVertexmumuFilterJpsiMuon","hltVertexmumuFilterJpsiMuon","hltVertexmumuFilterJpsiMuon","hltVerte$
 
 #        TriggersForUpsilon = cms.untracked.vstring("HLT_Dimuon0_Upsilon_Muon_v18","HLT_Dimuon0_Upsilon_Muon_v17","HLT_Dimuon0_Upsilon_Muon_v16","H$
 #        FiltersForUpsilon = cms.untracked.vstring("hltVertexmumuFilterUpsilonMuon","hltVertexmumuFilterUpsilonMuon","hltVertexmumuFilterUpsilonMuo$
  
-<<<<<<< HEAD
-        Chi2NDF_Track =  cms.untracked.double(15.0)
-=======
         Chi2NDF_Track =  cms.untracked.double(15.0),
         OniaDecayVtxProbCut = cms.untracked.double(0.01)
+)
+
 # process.mkcands = cms.EDAnalyzer('Bfinder',
 # 	Bchannel 		= cms.vint32(
+# 		1,#RECONSTRUCTION: J/psi + K
 # 		1,#RECONSTRUCTION: J/psi + Pi
 # 		1,#RECONSTRUCTION: J/psi + Ks 
 # 		1,#RECONSTRUCTION: J/psi + K* (K+, Pi-)
+# 		1,#RECONSTRUCTION: J/psi + K* (K-, Pi+)
+# 		1,#RECONSTRUCTION: J/psi + phi
+# 		1,#RECONSTRUCTION: J/psi + pi pi <= psi', X(3872), Bs->J/psi f0
 # 		1,#RECONSTRUCTION: J/psi + lambda (p+, pi-) 
 # 		1,),#RECONSTRUCTION: J/psi + lambda (p-, pi+) 
+#     MuonTriggerMatchingPath = cms.vstring("HLT_Dimuon*", "HLT_DoubleMu*"),
 # 	HLTLabel        = cms.InputTag('TriggerResults::HLT'),
 #     GenLabel        = cms.InputTag('genParticles'),
 # 	MuonLabel       = cms.InputTag('selectedPatMuons'),         #selectedPatMuons
