@@ -6,29 +6,17 @@
  *  [Directory] 
  *      TPS-Onia2MuMu/src/MultiLepPAT.cc
  *  [Description]
- *      Make rootTuple for Jpsi+Jpsi+Upsilon reconstruction from 6 muons
+ *      Make rootTuple for quarkonia+quarkonia+meson reconstruction.
+ *      Supports J/psi+J/psi+phi, J/psi+J/psi+Upsilon, J/psi+Upsilon+phi
+ *      via dynamic config switching (AnalysisMode parameter).
  *  [Implementation]
- *     <Notes on implementation>
+ *      Refactored from monolithic analyze() into modular helper methods.
+ *      All selection cuts externalized to config via StringCutObjectSelector.
  *  [Note]
- *      20240704 [Eric Wang]
- *          Upsilon is abbreviated as "Ups"
- *          PDG ID : Mu -> 13,  K -> 321, Pi -> 211, 
- *                   Jpsi -> 443, Ups -> 553, Phi -> 333
- *          Refraction was conducted, especially to the boolean variables.
- *          Room for improvement: (already tagged)
- *              "TO_ENC"            Encapsulation required
- *              "TO_IMPR_CPP11/17"  Use C++11/17 features for better 
- *                                  readability and efficiency
- *                                  (e.g. auto, range-based for loop)
- *          Github copilot is used for code and annotation completion.
- *      
- *      20240811 [Eric Wang]
- *       - The underlying core of edm::View<T> is actually a std::vector<T>.
- *         This fact may help with writing more efficient code.
- *       - It took me some time to realize that I must sort out the muon pairs
- *         before I can proceed with the JPsi and Upsilon reconstruction and 
- *         vertex matching. It would prove too troublesome to cover all 
- *         combinations of muon pairs in the "multi-layer-for-loop" structure.
+ *      20240704 [Eric Wang] - Initial version
+ *      20241029 [Eric Wang and Shi Zhenpeng] - J/psi+Upsilon+Phi branch
+ *      20260306 [Eric Wang - Refactor] - Full modularization
+ *          PDG ID: Mu->13, K->321, Pi->211, Jpsi->443, Ups->553, Phi->333
 ******************************************************************************/
 
 // system include files
@@ -36,7 +24,16 @@
 // user include files
 #include "../interface/MultiLepPAT.h"
 #include "../interface/VertexReProducer.h"
-
+#include <memory>
+#include <regex>
+#include <algorithm>
+#include <vector>
+#include <utility>
+#include <iostream>
+#include <string>
+#include <cmath>
+#include <limits>
+#include <unordered_set>
 #include "FWCore/Framework/interface/Frameworkfwd.h"
 #include "FWCore/Framework/interface/one/EDAnalyzer.h"
 #include "FWCore/Framework/interface/Event.h"
@@ -65,7 +62,6 @@
 #include "DataFormats/PatCandidates/interface/GenericParticle.h"
 #include "DataFormats/Common/interface/ValueMap.h"
 #include "DataFormats/TrackReco/interface/DeDxData.h"
-#include "DataFormats/Math/interface/Point3D.h"
 #include "DataFormats/GeometryCommonDetAlgo/interface/DeepCopyPointer.h"
 #include "DataFormats/GeometryVector/interface/GlobalPoint.h"
 #include "DataFormats/CLHEP/interface/AlgebraicObjects.h"
@@ -81,10 +77,10 @@
 #include "TrackingTools/TransientTrack/interface/TransientTrackBuilder.h"
 #include "TrackingTools/Records/interface/TransientTrackRecord.h"
 #include "TrackingTools/TransientTrack/interface/TransientTrack.h"
+#include "TrackingTools/IPTools/interface/IPTools.h"
 
 #include "MagneticField/Engine/interface/MagneticField.h"
 
-//////////This is necessary for lumicalc///////
 #include "DataFormats/Luminosity/interface/LumiSummary.h"
 #include "DataFormats/Luminosity/interface/LumiDetails.h"
 #include "FWCore/Framework/interface/LuminosityBlock.h"
@@ -97,1205 +93,2122 @@
 #include "TTree.h"
 #include "TVector3.h"
 
-#include <algorithm>
-#include <memory>
-#include <vector>
-#include <utility>
-#include <iostream>
-#include <fstream>
-#include <sstream>
-#include <string>
-#include <unordered_set>
-
-#include "DataFormats/MuonReco/interface/MuonSelectors.h"
-
 #include "CLHEP/Matrix/Vector.h"
 #include "CLHEP/Matrix/Matrix.h"
 #include "CLHEP/Matrix/SymMatrix.h"
 
-#include "TrackingTools/IPTools/interface/IPTools.h"
-
 #include "../data/TMVAClassification_BDT.class.C"
 
-// about photon
-#include "DataFormats/EgammaCandidates/interface/PhotonFwd.h"
-#include "DataFormats/EgammaCandidates/interface/Photon.h"
-#include "DataFormats/EgammaCandidates/interface/Conversion.h"
+#include "DataFormats/PatCandidates/interface/PackedCandidate.h"
 #include "DataFormats/PatCandidates/interface/CompositeCandidate.h"
-#include "DataFormats/ParticleFlowCandidate/interface/PFCandidate.h"
 #include "DataFormats/VertexReco/interface/VertexFwd.h"
 #include "DataFormats/VertexReco/interface/Vertex.h"
-#include <boost/foreach.hpp>
-
-#include "DataFormats/PatCandidates/interface/PackedCandidate.h" // MINIAOD
 
 typedef math::Error<3>::type CovarianceMatrix;
-typedef ROOT::Math::SVector<double, 3> SVector3;
-typedef ROOT::Math::SMatrix<double, 3, 3, ROOT::Math::MatRepSym<double, 3>> SMatrixSym3D;
 
-// constructors and destructor
+namespace {
+
+const reco::Track *bestMuonTrackForGenMatch(const pat::Muon &muon) {
+  const reco::TrackRef bestTrack = muon.muonBestTrack();
+  if (bestTrack.isNonnull() && bestTrack.isAvailable()) {
+    return bestTrack.get();
+  }
+
+  const reco::TrackRef innerTrack = muon.innerTrack();
+  if (innerTrack.isNonnull() && innerTrack.isAvailable()) {
+    return innerTrack.get();
+  }
+
+  return nullptr;
+}
+
+double wrappedDeltaPhi(double phi1, double phi2) {
+  double dphi = phi1 - phi2;
+  while (dphi > M_PI)
+    dphi -= 2. * M_PI;
+  while (dphi <= -M_PI)
+    dphi += 2. * M_PI;
+  return dphi;
+}
+
+double recoMuonCandidateChi2(const pat::Muon &muon,
+                             const reco::Candidate &cand,
+                             const reco::Track &track) {
+  const double sigmaPt = std::max(track.ptError(), 1e-6);
+  const double sigmaEta = std::max(track.etaError(), 1e-6);
+  const double sigmaPhi = std::max(track.phiError(), 1e-6);
+  const double dphi = wrappedDeltaPhi(muon.phi(), cand.phi());
+
+  return std::pow((muon.pt() - cand.pt()) / sigmaPt, 2) +
+         std::pow((muon.eta() - cand.eta()) / sigmaEta, 2) +
+         std::pow(dphi / sigmaPhi, 2);
+}
+
+double recoGenMuonChi2(const pat::Muon &muon, const reco::GenParticle &gen) {
+  const reco::Track *track = bestMuonTrackForGenMatch(muon);
+  if (track == nullptr) {
+    return std::numeric_limits<double>::infinity();
+  }
+
+  return recoMuonCandidateChi2(muon, gen, *track);
+}
+
+double recoPackedCandidateChi2(const pat::PackedCandidate &cand,
+                               const reco::Candidate &gen,
+                               const reco::Track &track) {
+  const double sigmaPt = std::max(track.ptError(), 1e-6);
+  const double sigmaEta = std::max(track.etaError(), 1e-6);
+  const double sigmaPhi = std::max(track.phiError(), 1e-6);
+  const double dphi = wrappedDeltaPhi(cand.phi(), gen.phi());
+
+  return std::pow((cand.pt() - gen.pt()) / sigmaPt, 2) +
+         std::pow((cand.eta() - gen.eta()) / sigmaEta, 2) +
+         std::pow(dphi / sigmaPhi, 2);
+}
+
+double muonPackedVectorRelP(const pat::Muon &muon, const pat::PackedCandidate &cand) {
+  const double muMomentum = muon.p();
+  if (muMomentum <= 0.) {
+    return std::numeric_limits<double>::infinity();
+  }
+  const double dpx = cand.px() - muon.px();
+  const double dpy = cand.py() - muon.py();
+  const double dpz = cand.pz() - muon.pz();
+  return std::sqrt(dpx * dpx + dpy * dpy + dpz * dpz) / muMomentum;
+}
+
+MultiLepPAT::MuTrkMatchMethod parseMuTrkMatchMethod(const std::string &methodName) {
+  if (methodName == "sourceCandidatePtr" || methodName == "first") {
+    return MultiLepPAT::MuTrkMatchMethod::SourceCandidatePtr;
+  }
+  if (methodName == "vector" || methodName == "leastDiff") {
+    return MultiLepPAT::MuTrkMatchMethod::Vector;
+  }
+  if (methodName == "chi2" || methodName == "sigma") {
+    return MultiLepPAT::MuTrkMatchMethod::Chi2;
+  }
+  if (methodName == "dzAssoc") {
+    return MultiLepPAT::MuTrkMatchMethod::DzAssoc;
+  }
+  if (methodName == "dzPv" || methodName == "addDz") {
+    return MultiLepPAT::MuTrkMatchMethod::DzPv;
+  }
+  throw cms::Exception("Configuration")
+      << "Unknown MuTrkMatchMethod: " << methodName
+      << ". Must be one of: sourceCandidatePtr, vector, chi2, dzAssoc, dzPv";
+}
+
+int resolveStoredGenIdx(
+    const reco::Candidate *cand,
+    const std::unordered_map<const reco::Candidate *, unsigned int> &addressToHandleIndex,
+    const std::unordered_map<unsigned int, int> &handleToNtupleIndex) {
+  if (cand == nullptr) {
+    return -1;
+  }
+
+  const auto handleIt = addressToHandleIndex.find(cand);
+  if (handleIt == addressToHandleIndex.end()) {
+    return -1;
+  }
+
+  const auto ntupleIt = handleToNtupleIndex.find(handleIt->second);
+  if (ntupleIt == handleToNtupleIndex.end()) {
+    return -1;
+  }
+
+  return ntupleIt->second;
+}
+
+}  // namespace
+
+/*****************************************************************************
+ * Constructor
+ *****************************************************************************/
 MultiLepPAT::MultiLepPAT(const edm::ParameterSet &iConfig)
-	: hlTriggerResults_(iConfig.getUntrackedParameter<edm::InputTag>("HLTriggerResults", edm::InputTag("TriggerResults::HLT"))),
-	  inputGEN_(iConfig.getUntrackedParameter<edm::InputTag>("inputGEN", edm::InputTag("genParticles"))),
-	  magneticFieldToken_(esConsumes<MagneticField, IdealMagneticFieldRecord>()),
-	  theTTBuilderToken_(esConsumes<TransientTrackBuilder, TransientTrackRecord>(edm::ESInputTag("", "TransientTrackBuilder"))),
-	  vtxSample(iConfig.getUntrackedParameter<std::string>("VtxSample", std::string("offlinePrimaryVertices"))),
-	  doMC(iConfig.getUntrackedParameter<bool>("DoMonteCarloTree", false)),
-	  MCParticle(iConfig.getUntrackedParameter<int>("MonteCarloParticleId", 20443)), // 20443 X, 100443 Psi(2S), 9120443  // X from B
-	  doJPsiMassCost(iConfig.getUntrackedParameter<bool>("DoJPsiMassConstraint")),
-	  MuPixHits_c(iConfig.getUntrackedParameter<int>("MinNumMuPixHits", 0)),
-	  MuSiHits_c(iConfig.getUntrackedParameter<int>("MinNumMuSiHits", 0)),
-	  MuNormChi_c(iConfig.getUntrackedParameter<double>("MaxMuNormChi2", 1000)),
-	  MuD0_c(iConfig.getUntrackedParameter<double>("MaxMuD0", 1000)),
-	  JMaxM_c(iConfig.getUntrackedParameter<double>("MaxJPsiMass", 4)),
-	  JMinM_c(iConfig.getUntrackedParameter<double>("MinJPsiMass", 2.2)),
-	  PiSiHits_c(iConfig.getUntrackedParameter<int>("MinNumTrSiHits", 0)),
-	  MuPt_c(iConfig.getUntrackedParameter<double>("MinMuPt", 0)),
-	  JPiPiDR_c(iConfig.getUntrackedParameter<double>("JPsiKKKMaxDR", 1)),
-	  XPiPiDR_c(iConfig.getUntrackedParameter<double>("XCandPiPiMaxDR", 1.1)),
-	  UseXDr_c(iConfig.getUntrackedParameter<bool>("UseXDr", false)),
-	  JPiPiMax_c(iConfig.getUntrackedParameter<double>("JPsiKKKMaxMass", 50)),
-	  JPiPiMin_c(iConfig.getUntrackedParameter<double>("JPsiKKKMinMass", 0)),
-	  resolveAmbiguity_(iConfig.getUntrackedParameter<bool>("resolvePileUpAmbiguity", true)),
-	  addXlessPrimaryVertex_(iConfig.getUntrackedParameter<bool>("addXlessPrimaryVertex", true)),
-	  TriggersForJpsi_(iConfig.getUntrackedParameter<std::vector<std::string>>("TriggersForJpsi")),
-	  FiltersForJpsi_(iConfig.getUntrackedParameter<std::vector<std::string>>("FiltersForJpsi")),
-	  TriggersForUpsilon_(iConfig.getUntrackedParameter<std::vector<std::string>>("TriggersForUpsilon")),
-	  FiltersForUpsilon_(iConfig.getUntrackedParameter<std::vector<std::string>>("FiltersForUpsilon")),
-	  Debug_(iConfig.getUntrackedParameter<bool>("Debug_Output", false)),
-	  Chi_Track_(iConfig.getUntrackedParameter<double>("Chi2NDF_Track", 10)),
-	  X_One_Tree_(0),
-
-	  runNum(0), evtNum(0), lumiNum(0), nGoodPrimVtx(0),
-	  trigRes(0), trigNames(0), L1TT(0), MatchTriggerNames(0),
-
-	  priVtxX(0), priVtxY(0), priVtxZ(0), priVtxXE(0), priVtxYE(0), priVtxZE(0), priVtxChiNorm(0), priVtxChi(0), priVtxCL(0),
-	  PriVtxXCorrX(0), PriVtxXCorrY(0), PriVtxXCorrZ(0),
-	  PriVtxXCorrEX(0), PriVtxXCorrEY(0), PriVtxXCorrEZ(0), PriVtxXCorrC2(0), PriVtxXCorrCL(0),
-
-	  nMu(0),
-	  muPx(0), muPy(0), muPz(0), muD0(0), muD0E(0), muDz(0), muChi2(0), muGlChi2(0), mufHits(0),
-	  muFirstBarrel(0), muFirstEndCap(0), muDzVtx(0), muDxyVtx(0),
-	  muNDF(0), muGlNDF(0), muPhits(0), muShits(0), muGlMuHits(0), muType(0), muQual(0),
-	  muTrack(0), muCharge(0), muIsoratio(0), muIsGoodLooseMuon(0), muIsGoodLooseMuonNew(0),
-	  muIsGoodSoftMuonNewIlse(0), muIsGoodSoftMuonNewIlseMod(0), muIsGoodTightMuon(0), muIsJpsiTrigMatch(0), muIsUpsTrigMatch(0), munMatchedSeg(0),
-
-	  muIsPatLooseMuon(0), muIsPatTightMuon(0), muIsPatSoftMuon(0), muIsPatMediumMuon(0),
-	  muUpsVrtxMatch(0), muL3TriggerMatch(0),
-
-	  muMVAMuonID(0), musegmentCompatibility(0),
-	  mupulldXdZ_pos_noArb(0), mupulldYdZ_pos_noArb(0),
-	  mupulldXdZ_pos_ArbDef(0), mupulldYdZ_pos_ArbDef(0),
-	  mupulldXdZ_pos_ArbST(0), mupulldYdZ_pos_ArbST(0),
-	  mupulldXdZ_pos_noArb_any(0), mupulldYdZ_pos_noArb_any(0),
-
-      Jpsi_1_mu_1_Idx(0), Jpsi_1_mu_2_Idx(0),
-      Jpsi_2_mu_1_Idx(0), Jpsi_2_mu_2_Idx(0),
-	     Ups_mu_1_Idx(0),    Ups_mu_2_Idx(0),
-
-      Jpsi_1_mass(0), Jpsi_1_massErr(0), Jpsi_1_massDiff(0),
-      Jpsi_2_mass(0), Jpsi_2_massErr(0), Jpsi_2_massDiff(0),
-         Ups_mass(0),    Ups_massErr(0),    Ups_massDiff(0),
-
-      Jpsi_1_ctau(0), Jpsi_1_ctauErr(0), Jpsi_1_Chi2(0), Jpsi_1_ndof(0), Jpsi_1_VtxProb(0),
-      Jpsi_2_ctau(0), Jpsi_2_ctauErr(0), Jpsi_2_Chi2(0), Jpsi_2_ndof(0), Jpsi_2_VtxProb(0),
-                                            Ups_Chi2(0),    Ups_ndof(0),    Ups_VtxProb(0),
-      
-      Jpsi_1_phi(0), Jpsi_1_eta(0), Jpsi_1_pt(0),
-      Jpsi_2_phi(0), Jpsi_2_eta(0), Jpsi_2_pt(0),
-         Ups_phi(0),    Ups_eta(0),    Ups_pt(0),
-
-      Jpsi_1_px(0), Jpsi_1_py(0), Jpsi_1_pz(0),
-      Jpsi_2_px(0), Jpsi_2_py(0), Jpsi_2_pz(0),
-         Ups_px(0),    Ups_py(0),    Ups_pz(0),
-      
-         Pri_mass(0),  Pri_massErr(0),
-         Pri_ctau(0),  Pri_ctauErr(0), Pri_Chi2(0), Pri_ndof(0), Pri_VtxProb(0),
-         Pri_px(0),    Pri_py(0),    Pri_pz(0), 
-         Pri_phi(0),   Pri_eta(0),   Pri_pt(0),
-      
-	  // doMC
-	  MC_X_py(0),
-	  MC_X_pz(0),
-	  MC_X_mass(0),
-	  MC_Dau_Jpsipx(0),
-	  MC_Dau_Jpsipy(0),
-	  MC_Dau_Jpsipz(0),
-	  MC_Dau_Jpsimass(0),
-	  MC_Dau_psi2spx(0),
-	  MC_Dau_psi2spy(0),
-	  MC_Dau_psi2spz(0),
-	  MC_Dau_psi2smass(0),
-	  MC_Granddau_mu1px(0),
-	  MC_Granddau_mu1py(0),
-	  MC_Granddau_mu1pz(0),
-	  MC_Granddau_mu2px(0),
-	  MC_Granddau_mu2py(0),
-	  MC_Granddau_mu2pz(0),
-	  MC_Granddau_Jpsipx(0),
-	  MC_Granddau_Jpsipy(0),
-	  MC_Granddau_Jpsipz(0),
-	  MC_Granddau_Jpsimass(0),
-	  MC_Granddau_pi1px(0),
-	  MC_Granddau_pi1py(0),
-	  MC_Granddau_pi1pz(0),
-	  MC_Granddau_pi2px(0),
-	  MC_Granddau_pi2py(0),
-	  MC_Granddau_pi2pz(0),
-	  MC_Grandgranddau_mu3px(0),
-	  MC_Grandgranddau_mu3py(0),
-	  MC_Grandgranddau_mu3pz(0),
-	  MC_Grandgranddau_mu4px(0),
-	  MC_Grandgranddau_mu4py(0),
-	  MC_Grandgranddau_mu4pz(0),
-
-	  MC_X_chg(0),
-	  MC_Dau_JpsipdgId(0),
-	  MC_Dau_psi2spdgId(0),
-	  MC_Granddau_mu1pdgId(0),
-	  MC_Granddau_mu2pdgId(0),
-	  MC_Granddau_JpsipdgId(0),
-	  MC_Granddau_pi1pdgId(0),
-	  MC_Granddau_pi2pdgId(0),
-	  MC_Grandgranddau_mu3pdgId(0),
-	  MC_Grandgranddau_mu4pdgId(0)
-	  // mybxlumicorr(0), myrawbxlumi(0)
+    : hlTriggerResults_(iConfig.getUntrackedParameter<edm::InputTag>(
+          "HLTriggerResults", edm::InputTag("TriggerResults::HLT"))),
+      inputGEN_(iConfig.getUntrackedParameter<edm::InputTag>(
+          "inputGEN", edm::InputTag("prunedGenParticles"))),
+      muonLabel_(iConfig.getUntrackedParameter<edm::InputTag>(
+          "MuonLabel", edm::InputTag("slimmedMuons"))),
+      trackLabel_(iConfig.getUntrackedParameter<edm::InputTag>(
+          "TrackLabel", edm::InputTag("packedPFCandidates"))),
+      magneticFieldToken_(esConsumes<MagneticField, IdealMagneticFieldRecord>()),
+      theTTBuilderToken_(esConsumes<TransientTrackBuilder, TransientTrackRecord>(
+          edm::ESInputTag("", "TransientTrackBuilder"))),
+      doMC(iConfig.getUntrackedParameter<bool>("DoMonteCarloTree", false)),
+      requireAcceptedCandidatesForMonteCarloTree_(iConfig.getUntrackedParameter<bool>(
+          "RequireAcceptedCandidatesForMonteCarloTree", false)),
+      doJPsiMassCost(iConfig.getUntrackedParameter<bool>("DoJPsiMassConstraint", false)),
+      Debug_(iConfig.getUntrackedParameter<bool>("Debug_Output", false)),
+      // Analysis mode: "JpsiJpsiPhi", "JpsiJpsiUps", "JpsiUpsPhi"
+      analysisModeName_(iConfig.getUntrackedParameter<std::string>("AnalysisMode", "JpsiJpsiPhi")),
+      // StringCutObjectSelector for muon and track
+      muonSelectionStr_(iConfig.getUntrackedParameter<std::string>(
+          "MuonSelection", "pt > 2.5 && abs(eta) < 2.4")),
+      muonSelector_(muonSelectionStr_),
+      trackSelectionStr_(iConfig.getUntrackedParameter<std::string>(
+          "TrackSelection",
+          "pt > 2.0 && abs(eta) < 2.5 && numberOfHits > 4")),
+      trackSelector_(trackSelectionStr_),
+      // Primary vertex cuts
+      pvNdofMin_(iConfig.getUntrackedParameter<int>("PVNdofMin", 5)),
+      pvMaxAbsZ_(iConfig.getUntrackedParameter<double>("PVMaxAbsZ", 24.0)),
+      pvMaxRho_(iConfig.getUntrackedParameter<double>("PVMaxRho", 2.0)),
+      // Muon pair mass windows
+      JpsiMassMin_(iConfig.getUntrackedParameter<double>("JpsiMassMin", 1.0)),
+      JpsiMassMax_(iConfig.getUntrackedParameter<double>("JpsiMassMax", 4.0)),
+      UpsMassMin_(iConfig.getUntrackedParameter<double>("UpsMassMin", 8.0)),
+      UpsMassMax_(iConfig.getUntrackedParameter<double>("UpsMassMax", 12.0)),
+      // Track pair mass windows
+      PhiMassMin_(iConfig.getUntrackedParameter<double>("PhiMassMin", 0.8)),
+      PhiMassMax_(iConfig.getUntrackedParameter<double>("PhiMassMax", 1.2)),
+      // Track kinematics
+      trackPtMin_(iConfig.getUntrackedParameter<double>("TrackPtMin", 2.0)),
+      trackDRMax_(iConfig.getUntrackedParameter<double>("TrackDRMax", 0.7)),
+      // Vertex prob cuts
+      OniaDecayVtxProbCut_(iConfig.getUntrackedParameter<double>("OniaDecayVtxProbCut", 0.001)),
+      PriVtxProbCut_(iConfig.getUntrackedParameter<double>("PriVtxProbCut", 0.0)),
+      // Per-resonance candidate pT/eta pre-cuts
+      jpsiCandPtMin_(iConfig.getUntrackedParameter<double>("JpsiCandPtMin", 0.0)),
+      jpsiCandEtaMax_(iConfig.getUntrackedParameter<double>("JpsiCandEtaMax", 999.0)),
+      upsCandPtMin_(iConfig.getUntrackedParameter<double>("UpsCandPtMin", 0.0)),
+      upsCandEtaMax_(iConfig.getUntrackedParameter<double>("UpsCandEtaMax", 999.0)),
+      phiCandPtMin_(iConfig.getUntrackedParameter<double>("PhiCandPtMin", 0.0)),
+      phiCandEtaMax_(iConfig.getUntrackedParameter<double>("PhiCandEtaMax", 999.0)),
+      // PV selection mode
+      pvSelectionMode_(iConfig.getUntrackedParameter<std::string>("PVSelectionMode", "firstVertex")),
+      // Minimum fromPV for tracks
+      minTrackFromPV_(iConfig.getUntrackedParameter<int>("MinTrackFromPV", 1)),
+      // Minimum muon count
+      minMuonCount_(iConfig.getUntrackedParameter<unsigned int>("MinMuonCount", 4)),
+      // Muon matching
+      muTrkMatchMethod_(iConfig.getUntrackedParameter<std::string>(
+          "MuTrkMatchMethod", "sourceCandidatePtr")),
+      muTrkMatchMode_(MuTrkMatchMethod::SourceCandidatePtr),
+      muTrkMatchDebug_(iConfig.getUntrackedParameter<bool>("MuTrkMatchDebug", false)),
+      muonPackedMatchVectorRelPMax_(iConfig.getUntrackedParameter<double>(
+          "MuonPackedMatchVectorRelPMax",
+          iConfig.getUntrackedParameter<double>("MuMatchTrkMomentumRelDiffThr", 0.01))),
+      muonPackedMatchChi2Max_(iConfig.getUntrackedParameter<double>("MuonPackedMatchChi2Max", 25.0)),
+      muonPackedMatchDzPvChi2Max_(iConfig.getUntrackedParameter<double>(
+          "MuonPackedMatchDzPvChi2Max",
+          iConfig.getUntrackedParameter<double>("MuonPackedMatchChi2Max", 25.0))),
+      muonPackedMatchDzAssocChi2Max_(iConfig.getUntrackedParameter<double>(
+          "MuonPackedMatchDzAssocChi2Max",
+          iConfig.getUntrackedParameter<double>("MuonPackedMatchChi2Max", 25.0))),
+      // Store all primary vertices and muon quantities
+      storeAllPVs_(iConfig.getUntrackedParameter<bool>("StoreAllPVs", true)),
+      storeMuonMomentumErrors_(iConfig.getUntrackedParameter<bool>("StoreMuonMomentumErrors", true)),
+      storeMuonPVAssoc_(iConfig.getUntrackedParameter<bool>("StoreMuonPVAssoc", true)),
+      recoGenMuonMatchChi2Max_(iConfig.getUntrackedParameter<double>("RecoGenMuonMatchChi2Max", 25.0)),
+      recoGenKaonMatchChi2Max_(iConfig.getUntrackedParameter<double>("RecoGenKaonMatchChi2Max", 25.0)),
+      priRequireCommonAssocPV_(iConfig.getUntrackedParameter<bool>("PriRequireCommonAssocPV", true)),
+      priRequireTrackPVCompatibility_(iConfig.getUntrackedParameter<bool>("PriRequireTrackPVCompatibility", true)),
+      priTrackDzPVMax_(iConfig.getUntrackedParameter<double>("PriTrackDzPVMax", 2.0)),
+      priTrackDxyPVMax_(iConfig.getUntrackedParameter<double>("PriTrackDxyPVMax", 0.1)),
+      // Final fitted mass window check
+      checkFinalMass_(iConfig.getUntrackedParameter<bool>("CheckFinalMass", true)),
+      // Trigger info
+      resolveAmbiguity_(iConfig.getUntrackedParameter<bool>("resolvePileUpAmbiguity", true)),
+      addXlessPrimaryVertex_(iConfig.getUntrackedParameter<bool>("addXlessPrimaryVertex", true)),
+      TriggersForJpsi_(iConfig.getUntrackedParameter<std::vector<std::string>>("TriggersForJpsi")),
+      FiltersForJpsi_(iConfig.getUntrackedParameter<std::vector<std::string>>("FiltersForJpsi")),
+      TriggersForUpsilon_(iConfig.getUntrackedParameter<std::vector<std::string>>("TriggersForUpsilon")),
+      FiltersForUpsilon_(iConfig.getUntrackedParameter<std::vector<std::string>>("FiltersForUpsilon")),
+      X_One_Tree_(nullptr),
+      runNum(0), evtNum(0), lumiNum(0), nGoodPrimVtx(0),
+      trigRes(nullptr), trigNames(nullptr), L1TT(nullptr), MatchJpsiTrigNames(nullptr), MatchUpsTrigNames(nullptr),
+      priVtxX(0), priVtxY(0), priVtxZ(0), priVtxXE(0), priVtxYE(0), priVtxZE(0),
+      priVtxChiNorm(0), priVtxChi(0), priVtxCL(0),
+      PriVtxXCorrX(nullptr), PriVtxXCorrY(nullptr), PriVtxXCorrZ(nullptr),
+      PriVtxXCorrEX(nullptr), PriVtxXCorrEY(nullptr), PriVtxXCorrEZ(nullptr),
+      PriVtxXCorrC2(nullptr), PriVtxXCorrCL(nullptr),
+      // All primary vertices (not just selected)
+      nRecVtx(0),
+      RecVtx_x(nullptr), RecVtx_y(nullptr), RecVtx_z(nullptr),
+      RecVtx_xErr(nullptr), RecVtx_yErr(nullptr), RecVtx_zErr(nullptr),
+      RecVtx_chi2(nullptr), RecVtx_ndof(nullptr), RecVtx_vtxProb(nullptr),
+      RecVtx_nTracks(nullptr),
+      nMu(0),
+      muPx(nullptr), muPy(nullptr), muPz(nullptr),
+      muD0(nullptr), muD0E(nullptr), muDz(nullptr),
+      muChi2(nullptr), muGlChi2(nullptr), mufHits(nullptr),
+      muFirstBarrel(nullptr), muFirstEndCap(nullptr), muDzVtx(nullptr), muDxyVtx(nullptr),
+      muNDF(nullptr), muGlNDF(nullptr), muPhits(nullptr), muShits(nullptr),
+      muGlMuHits(nullptr), muType(nullptr), muQual(nullptr),
+      muTrack(nullptr), muCharge(nullptr), muIsoratio(nullptr),
+      muIsGoodLooseMuon(nullptr), muIsGoodLooseMuonNew(nullptr),
+      muIsGoodSoftMuonNewIlse(nullptr), muIsGoodSoftMuonNewIlseMod(nullptr),
+      muIsGlobalMuon(nullptr), muIsGoodTightMuon(nullptr),
+      muIsJpsiTrigMatch(nullptr), muIsUpsTrigMatch(nullptr), munMatchedSeg(nullptr),
+      muIsJpsiFilterMatch(nullptr), muIsUpsFilterMatch(nullptr),
+      muIsPatLooseMuon(nullptr), muIsPatTightMuon(nullptr),
+      muIsPatSoftMuon(nullptr), muIsPatMediumMuon(nullptr),
+      muFromPV(nullptr), muPVAssocQuality(nullptr),
+      // Muon momentum errors
+      muPxErr(nullptr), muPyErr(nullptr), muPzErr(nullptr), muPtErr(nullptr),
+      // Muon PV association (surplus from sourceCandidatePtr)
+      muVertexId(nullptr), muDzAssocPV(nullptr), muDxyAssocPV(nullptr),
+      muFromPVAssocPV(nullptr), muPdgId(nullptr),
+      muPackedMatchIdx(nullptr), muPackedMatchMethod(nullptr),
+      muPackedMatchVectorRelP(nullptr), muPackedMatchChi2(nullptr),
+      muPackedMatchDzPV(nullptr), muPackedMatchDzAssocPV(nullptr),
+      muGenMatchIdx(nullptr), muGenMatchSource(nullptr), muGenMatchChi2(nullptr),
+      muMVAMuonID(nullptr), musegmentCompatibility(nullptr),
+      mupulldXdZ_pos_noArb(nullptr), mupulldYdZ_pos_noArb(nullptr),
+      mupulldXdZ_pos_ArbDef(nullptr), mupulldYdZ_pos_ArbDef(nullptr),
+      mupulldXdZ_pos_ArbST(nullptr), mupulldYdZ_pos_ArbST(nullptr),
+      mupulldXdZ_pos_noArb_any(nullptr), mupulldYdZ_pos_noArb_any(nullptr),
+      // Muon-track matching debug (only if muTrkMatchDebug_)
+      muMatch_nCandidates(nullptr), muMatch_bestRelDiff(nullptr),
+      muMatch_bestDz(nullptr), muMatch_methodUsed(nullptr),
+      Jpsi_1_mu_1_Idx(nullptr), Jpsi_1_mu_2_Idx(nullptr),
+      Jpsi_2_mu_1_Idx(nullptr), Jpsi_2_mu_2_Idx(nullptr),
+      Phi_K_1_Idx(nullptr), Phi_K_2_Idx(nullptr),
+      Jpsi_1_mass(nullptr), Jpsi_1_massErr(nullptr), Jpsi_1_massDiff(nullptr),
+      Jpsi_2_mass(nullptr), Jpsi_2_massErr(nullptr), Jpsi_2_massDiff(nullptr),
+      Phi_mass(nullptr), Phi_massErr(nullptr), Phi_massDiff(nullptr),
+      Jpsi_1_ctau(nullptr), Jpsi_1_ctauErr(nullptr), Jpsi_1_Chi2(nullptr),
+      Jpsi_1_ndof(nullptr), Jpsi_1_VtxProb(nullptr),
+      Jpsi_2_ctau(nullptr), Jpsi_2_ctauErr(nullptr), Jpsi_2_Chi2(nullptr),
+      Jpsi_2_ndof(nullptr), Jpsi_2_VtxProb(nullptr),
+      Phi_ctau(nullptr), Phi_ctauErr(nullptr), Phi_Chi2(nullptr),
+      Phi_ndof(nullptr), Phi_VtxProb(nullptr),
+      Jpsi_1_phi(nullptr), Jpsi_1_eta(nullptr), Jpsi_1_pt(nullptr),
+      Jpsi_2_phi(nullptr), Jpsi_2_eta(nullptr), Jpsi_2_pt(nullptr),
+      Phi_phi(nullptr), Phi_eta(nullptr), Phi_pt(nullptr),
+      Jpsi_1_px(nullptr), Jpsi_1_py(nullptr), Jpsi_1_pz(nullptr),
+      Jpsi_2_px(nullptr), Jpsi_2_py(nullptr), Jpsi_2_pz(nullptr),
+      Phi_px(nullptr), Phi_py(nullptr), Phi_pz(nullptr),
+      // Momentum errors
+      Jpsi_1_pxErr(nullptr), Jpsi_1_pyErr(nullptr), Jpsi_1_pzErr(nullptr), Jpsi_1_ptErr(nullptr),
+      Jpsi_2_pxErr(nullptr), Jpsi_2_pyErr(nullptr), Jpsi_2_pzErr(nullptr), Jpsi_2_ptErr(nullptr),
+      Phi_pxErr(nullptr), Phi_pyErr(nullptr), Phi_pzErr(nullptr), Phi_ptErr(nullptr),
+      Phi_fitPass(nullptr), Phi_commonAssocPVPass(nullptr), Phi_commonAssocPVIdx(nullptr),
+      Phi_trackPVPass(nullptr), Phi_vertexCriteriaPass(nullptr),
+      Phi_maxAbsDzPV(nullptr), Phi_maxAbsDxyPV(nullptr),
+      Pri_mass(nullptr), Pri_massErr(nullptr),
+      Pri_ctau(nullptr), Pri_ctauErr(nullptr), Pri_Chi2(nullptr),
+      Pri_ndof(nullptr), Pri_VtxProb(nullptr),
+      Pri_px(nullptr), Pri_py(nullptr), Pri_pz(nullptr),
+      Pri_phi(nullptr), Pri_eta(nullptr), Pri_pt(nullptr),
+      Pri_pxErr(nullptr), Pri_pyErr(nullptr), Pri_pzErr(nullptr), Pri_ptErr(nullptr),
+      Pri_fitValid(nullptr), Pri_fitPass(nullptr), Pri_assocPVPass(nullptr),
+      Pri_assocPVIdx(nullptr), Pri_trackPVPass(nullptr), Pri_passAny(nullptr),
+      Pri_maxAbsDzPV(nullptr), Pri_maxAbsDxyPV(nullptr),
+      Phi_K_1_px(nullptr), Phi_K_1_py(nullptr), Phi_K_1_pz(nullptr),
+      Phi_K_2_px(nullptr), Phi_K_2_py(nullptr), Phi_K_2_pz(nullptr),
+      Phi_K_1_eta(nullptr), Phi_K_1_phi(nullptr), Phi_K_1_pt(nullptr),
+      Phi_K_2_eta(nullptr), Phi_K_2_phi(nullptr), Phi_K_2_pt(nullptr),
+      Phi_K_1_fromPV(nullptr), Phi_K_2_fromPV(nullptr),
+      Phi_K_1_pvAssocQuality(nullptr), Phi_K_2_pvAssocQuality(nullptr),
+      Phi_K_1_vertexId(nullptr), Phi_K_2_vertexId(nullptr),
+      Phi_K_1_hasAssocPV(nullptr), Phi_K_2_hasAssocPV(nullptr),
+      Phi_K_1_passDzPV(nullptr), Phi_K_2_passDzPV(nullptr),
+      Phi_K_1_passDxyPV(nullptr), Phi_K_2_passDxyPV(nullptr),
+      Phi_K_1_passTrackPV(nullptr), Phi_K_2_passTrackPV(nullptr),
+      Phi_K_1_dzPV(nullptr), Phi_K_1_dxyPV(nullptr), Phi_K_1_dzAssocPV(nullptr), Phi_K_1_dxyAssocPV(nullptr),
+      Phi_K_2_dzPV(nullptr), Phi_K_2_dxyPV(nullptr), Phi_K_2_dzAssocPV(nullptr), Phi_K_2_dxyAssocPV(nullptr),
+      Phi_K_1_genMatchIdx(nullptr), Phi_K_1_genMatchSource(nullptr),
+      Phi_K_2_genMatchIdx(nullptr), Phi_K_2_genMatchSource(nullptr),
+      Phi_K_1_genMatchChi2(nullptr), Phi_K_2_genMatchChi2(nullptr),
+      // Upsilon branches
+      Ups_mu_1_Idx(nullptr), Ups_mu_2_Idx(nullptr),
+      Ups_mass(nullptr), Ups_massErr(nullptr), Ups_massDiff(nullptr),
+      Ups_ctau(nullptr), Ups_ctauErr(nullptr), Ups_Chi2(nullptr),
+      Ups_ndof(nullptr), Ups_VtxProb(nullptr),
+      Ups_px(nullptr), Ups_py(nullptr), Ups_pz(nullptr),
+      Ups_phi(nullptr), Ups_eta(nullptr), Ups_pt(nullptr),
+      Ups_pxErr(nullptr), Ups_pyErr(nullptr), Ups_pzErr(nullptr), Ups_ptErr(nullptr),
+      // MC gen-level (new)
+      MC_GenPart_pdgId(nullptr), MC_GenPart_status(nullptr), MC_GenPart_motherPdgId(nullptr),
+      MC_GenPart_motherGenIdx(nullptr),
+      MC_GenPart_handleIndex(nullptr),
+      MC_GenPart_px(nullptr), MC_GenPart_py(nullptr), MC_GenPart_pz(nullptr), MC_GenPart_mass(nullptr),
+      MC_GenPart_pt(nullptr), MC_GenPart_eta(nullptr), MC_GenPart_phi(nullptr),
+      // MC gen-level (legacy)
+      MC_X_px(nullptr), MC_X_py(nullptr), MC_X_pz(nullptr), MC_X_mass(nullptr),
+      MC_Dau_Jpsipx(nullptr), MC_Dau_Jpsipy(nullptr), MC_Dau_Jpsipz(nullptr), MC_Dau_Jpsimass(nullptr),
+      MC_Dau_psi2spx(nullptr), MC_Dau_psi2spy(nullptr), MC_Dau_psi2spz(nullptr), MC_Dau_psi2smass(nullptr),
+      MC_Granddau_mu1px(nullptr), MC_Granddau_mu1py(nullptr), MC_Granddau_mu1pz(nullptr),
+      MC_Granddau_mu2px(nullptr), MC_Granddau_mu2py(nullptr), MC_Granddau_mu2pz(nullptr),
+      MC_Granddau_Jpsipx(nullptr), MC_Granddau_Jpsipy(nullptr), MC_Granddau_Jpsipz(nullptr), MC_Granddau_Jpsimass(nullptr),
+      MC_Granddau_pi1px(nullptr), MC_Granddau_pi1py(nullptr), MC_Granddau_pi1pz(nullptr),
+      MC_Granddau_pi2px(nullptr), MC_Granddau_pi2py(nullptr), MC_Granddau_pi2pz(nullptr),
+      MC_Grandgranddau_mu3px(nullptr), MC_Grandgranddau_mu3py(nullptr), MC_Grandgranddau_mu3pz(nullptr),
+      MC_Grandgranddau_mu4px(nullptr), MC_Grandgranddau_mu4py(nullptr), MC_Grandgranddau_mu4pz(nullptr),
+      MC_X_chg(nullptr),
+      MC_Dau_JpsipdgId(nullptr), MC_Dau_psi2spdgId(nullptr),
+      MC_Granddau_mu1pdgId(nullptr), MC_Granddau_mu2pdgId(nullptr),
+      MC_Granddau_JpsipdgId(nullptr),
+      MC_Granddau_pi1pdgId(nullptr), MC_Granddau_pi2pdgId(nullptr),
+      MC_Grandgranddau_mu3pdgId(nullptr), MC_Grandgranddau_mu4pdgId(nullptr),
+      Match_mu1px(nullptr), Match_mu1py(nullptr), Match_mu1pz(nullptr),
+      Match_mu2px(nullptr), Match_mu2py(nullptr), Match_mu2pz(nullptr),
+      Match_mu3px(nullptr), Match_mu3py(nullptr), Match_mu3pz(nullptr),
+      Match_mu4px(nullptr), Match_mu4py(nullptr), Match_mu4pz(nullptr),
+      Match_pi1px(nullptr), Match_pi1py(nullptr), Match_pi1pz(nullptr),
+      Match_pi2px(nullptr), Match_pi2py(nullptr), Match_pi2pz(nullptr)
 {
-	// get token here for four-muon;
-	gtRecordToken_     = consumes<L1GlobalTriggerReadoutRecord>(edm::InputTag("gtDigis"));
-	gtbeamspotToken_   = consumes<BeamSpot>(edm::InputTag("offlineBeamSpot"));
-	gtprimaryVtxToken_ = consumes<VertexCollection>(edm::InputTag("offlineSlimmedPrimaryVertices")); //  MINIAOD
-	gtpatmuonToken_    = consumes<edm::View<pat::Muon>>(edm::InputTag("slimmedMuons"));				 //  MINIAOD
-	gttriggerToken_    = consumes<edm::TriggerResults>(edm::InputTag("TriggerResults::HLT"));
-	trackToken_        = consumes<edm::View<pat::PackedCandidate>>(edm::InputTag("packedPFCandidates")); //  MINIAOD
-	genParticlesToken_ = consumes<reco::GenParticleCollection>(edm::InputTag("genParticles"));
+    // Parse analysis mode
+    if (analysisModeName_ == "JpsiJpsiPhi") {
+        analysisChannel_ = AnalysisChannel::JpsiJpsiPhi;
+    } else if (analysisModeName_ == "JpsiJpsiUps") {
+        analysisChannel_ = AnalysisChannel::JpsiJpsiUps;
+    } else if (analysisModeName_ == "JpsiUpsPhi") {
+        analysisChannel_ = AnalysisChannel::JpsiUpsPhi;
+    } else {
+        throw cms::Exception("Configuration")
+            << "Unknown AnalysisMode: " << analysisModeName_
+            << ". Must be one of: JpsiJpsiPhi, JpsiJpsiUps, JpsiUpsPhi";
+    }
+    
+    // For JpsiJpsiUps, enforce minimum 6 muons
+    if (analysisChannel_ == AnalysisChannel::JpsiJpsiUps) {
+        minMuonCount_ = std::max(minMuonCount_, 6u);
+    }
+
+    muTrkMatchMode_ = parseMuTrkMatchMethod(muTrkMatchMethod_);
+    
+    // EDM tokens
+    gtRecordToken_     = consumes<L1GlobalTriggerReadoutRecord>(edm::InputTag("gtDigis"));
+    gtbeamspotToken_   = consumes<BeamSpot>(edm::InputTag("offlineBeamSpot"));
+    gtprimaryVtxToken_ = consumes<VertexCollection>(edm::InputTag("offlineSlimmedPrimaryVertices"));
+    gtpatmuonToken_    = consumes<edm::View<pat::Muon>>(muonLabel_);
+    gttriggerToken_    = consumes<edm::TriggerResults>(edm::InputTag("TriggerResults::HLT"));
+    trackToken_        = consumes<edm::View<pat::PackedCandidate>>(trackLabel_);
+    genParticlesToken_ = consumes<reco::GenParticleCollection>(inputGEN_);
 }
 
-MultiLepPAT::~MultiLepPAT()
-{
-	// do anything here that needs to be done at desctruction time
-	// (e.g. close files, deallocate resources etc.)
-}
-// member functions
+MultiLepPAT::~MultiLepPAT() {}
 
-//    ofstream myfile("comparison.txt");
-// ------------ method called to for each event  ------------
+/*****************************************************************************
+ * Main analyze() - delegates to modular steps
+ *****************************************************************************/
 void MultiLepPAT::analyze(const edm::Event &iEvent, const edm::EventSetup &iSetup)
 {
-	
-
-    // Load the MC results [Annotated by Eric Wang, 20240704]
-
-	TLorentzVector MC_mu1p4, MC_mu2p4, MC_mu3p4, MC_mu4p4, MC_pi1p4, MC_pi2p4;
-	if (doMC)
-	{
-		edm::Handle<reco::GenParticleCollection> genParticles;
-		iEvent.getByToken(genParticlesToken_, genParticles);
-
-		for (const auto &particle : *(genParticles.product()))
-		{
-			if (std::abs(particle.pdgId()) == 35 && particle.numberOfDaughters() >= 2)
-			{
-				MC_X_px->push_back(particle.px());
-				MC_X_py->push_back(particle.py());
-				MC_X_pz->push_back(particle.pz());
-				MC_X_mass->push_back(particle.mass());
-				MC_X_chg->push_back(particle.charge());
-				// particle.daughter(0)->pdgId() == 443 Jpsi
-				MC_Dau_JpsipdgId->push_back(particle.daughter(0)->pdgId());
-				MC_Dau_Jpsipx->push_back(particle.daughter(0)->px());
-				MC_Dau_Jpsipy->push_back(particle.daughter(0)->py());
-				MC_Dau_Jpsipz->push_back(particle.daughter(0)->pz());
-				MC_Dau_Jpsimass->push_back(particle.daughter(0)->mass());
-				MC_Dau_psi2spdgId->push_back(particle.daughter(1)->pdgId());
-				MC_Dau_psi2spx->push_back(particle.daughter(1)->px());
-				MC_Dau_psi2spy->push_back(particle.daughter(1)->py());
-				MC_Dau_psi2spz->push_back(particle.daughter(1)->pz());
-				MC_Dau_psi2smass->push_back(particle.daughter(1)->mass());
-				// particle.daughter(0)->daughter(1)->pdgId() == -13 mu+
-				MC_Granddau_mu1pdgId->push_back(particle.daughter(0)->daughter(1)->pdgId());
-				MC_Granddau_mu1px->push_back(particle.daughter(0)->daughter(1)->px());
-				MC_Granddau_mu1py->push_back(particle.daughter(0)->daughter(1)->py());
-				MC_Granddau_mu1pz->push_back(particle.daughter(0)->daughter(1)->pz());
-				MC_Granddau_mu2pdgId->push_back(particle.daughter(0)->daughter(0)->pdgId());
-				MC_Granddau_mu2px->push_back(particle.daughter(0)->daughter(0)->px());
-				MC_Granddau_mu2py->push_back(particle.daughter(0)->daughter(0)->py());
-				MC_Granddau_mu2pz->push_back(particle.daughter(0)->daughter(0)->pz());
-				// particle.daughter(1)->daughter(0)->pdgId() == 443 Jpsi from psi2s
-				MC_Granddau_JpsipdgId->push_back(particle.daughter(1)->daughter(0)->pdgId());
-				MC_Granddau_Jpsipx->push_back(particle.daughter(1)->daughter(0)->px());
-				MC_Granddau_Jpsipy->push_back(particle.daughter(1)->daughter(0)->py());
-				MC_Granddau_Jpsipz->push_back(particle.daughter(1)->daughter(0)->pz());
-				MC_Granddau_Jpsimass->push_back(particle.daughter(1)->daughter(0)->mass());
-				// particle.daughter(1)->daughter(1)->pdgId() == 211 pi+ from psi2s
-				MC_Granddau_pi1pdgId->push_back(particle.daughter(1)->daughter(1)->pdgId());
-				MC_Granddau_pi1px->push_back(particle.daughter(1)->daughter(1)->px());
-				MC_Granddau_pi1py->push_back(particle.daughter(1)->daughter(1)->py());
-				MC_Granddau_pi1pz->push_back(particle.daughter(1)->daughter(1)->pz());
-				MC_Granddau_pi2pdgId->push_back(particle.daughter(1)->daughter(2)->pdgId());
-				MC_Granddau_pi2px->push_back(particle.daughter(1)->daughter(2)->px());
-				MC_Granddau_pi2py->push_back(particle.daughter(1)->daughter(2)->py());
-				MC_Granddau_pi2pz->push_back(particle.daughter(1)->daughter(2)->pz());
-				// particle.daughter(1)->daughter(0)->daughter(1)->pdgId() == -13 mu+ from Jpsi from psi2s
-				MC_Grandgranddau_mu3pdgId->push_back(particle.daughter(1)->daughter(0)->daughter(1)->pdgId());
-				MC_Grandgranddau_mu3px->push_back(particle.daughter(1)->daughter(0)->daughter(1)->px());
-				MC_Grandgranddau_mu3py->push_back(particle.daughter(1)->daughter(0)->daughter(1)->py());
-				MC_Grandgranddau_mu3pz->push_back(particle.daughter(1)->daughter(0)->daughter(1)->pz());
-				MC_Grandgranddau_mu4pdgId->push_back(particle.daughter(1)->daughter(0)->daughter(0)->pdgId());
-				MC_Grandgranddau_mu4px->push_back(particle.daughter(1)->daughter(0)->daughter(0)->px());
-				MC_Grandgranddau_mu4py->push_back(particle.daughter(1)->daughter(0)->daughter(0)->py());
-				MC_Grandgranddau_mu4pz->push_back(particle.daughter(1)->daughter(0)->daughter(0)->pz());
-
-				MC_mu1p4.SetXYZM((*MC_Granddau_mu1px)[0], (*MC_Granddau_mu1py)[0], (*MC_Granddau_mu1pz)[0], myMuMass);
-				MC_mu2p4.SetXYZM((*MC_Granddau_mu2px)[0], (*MC_Granddau_mu2py)[0], (*MC_Granddau_mu2pz)[0], myMuMass);
-				MC_mu3p4.SetXYZM((*MC_Grandgranddau_mu3px)[0], (*MC_Grandgranddau_mu3py)[0], (*MC_Grandgranddau_mu3pz)[0], myMuMass);
-				MC_mu4p4.SetXYZM((*MC_Grandgranddau_mu4px)[0], (*MC_Grandgranddau_mu4py)[0], (*MC_Grandgranddau_mu4pz)[0], myMuMass);
-				MC_pi1p4.SetXYZM((*MC_Granddau_pi1px)[0], (*MC_Granddau_pi1py)[0], (*MC_Granddau_pi1pz)[0], myPiMass);
-				MC_pi2p4.SetXYZM((*MC_Granddau_pi2px)[0], (*MC_Granddau_pi2py)[0], (*MC_Granddau_pi2pz)[0], myPiMass);
-			} // for (const auto& particle: *(genParticles.product()))
-		}	  // if ( std::abs(particle.pdgId())  == 35 && particle.numberOfDaughters() ==2 )
-	}		  // doMC
-
-	// get event content information
-
-	using std::vector;
-	using namespace edm;
-	using namespace reco;
-	using namespace std;
-
-	runNum = iEvent.id().run();
-	evtNum = iEvent.id().event();
-	lumiNum = iEvent.id().luminosityBlock();
-
-	const MagneticField &bFieldHandle = iSetup.getData(magneticFieldToken_);
-
-    /**************************************************************************
-     * [Section]
-     *      HLT Trigger Info
-     * [Implementation]
-     *      - Call getByToken() to acquire HLT results
-     *      - Categorize the 
-     * 
-    **************************************************************************/
-
-	edm::Handle<edm::TriggerResults> hltresults;
-	bool Error_t = false;
-	try
-	{
-		iEvent.getByToken(gttriggerToken_, hltresults);
-	}
-	catch (...)
-	{	
-		Error_t = true;
-		cout << "Couldn't get handle on HLT Trigger!" << endl;
-	}
-	if (Error_t || !hltresults.isValid())
-	{
-		cout << "No Trigger Results!" << endl;
-	}
-	else
-	{
-		int ntrigs = hltresults->size();
-		if (ntrigs == 0)
-		{
-			cout << "No trigger name given in TriggerResults of the input " << endl;
-		}
-
-		edm::TriggerNames triggerNames_;
-		triggerNames_ = iEvent.triggerNames(*hltresults);   // Get trigger names [Annotated by Eric Wang, 20240704]
-
-		int nUpstrigger = TriggersForUpsilon_.size();
-		int nJpsitrigger = TriggersForJpsi_.size();
-
-		for (int JpsiTrig = 0; JpsiTrig < nJpsitrigger; JpsiTrig++)
-		{
-			JpsiMatchTrig[JpsiTrig] = 0;
-		} // Jpsi trigger
-
-		for (int UpsTrig = 0; UpsTrig < nUpstrigger; UpsTrig++)
-		{
-			UpsilonMatchTrig[UpsTrig] = 0;
-		} // upsilon trig
-
-		for (int itrig = 0; itrig < ntrigs; itrig++) // Loop over all triggers [Annotated by Eric Wang, 20240704]
-		{
-			string trigName = triggerNames_.triggerName(itrig);
-			int hltflag = (*hltresults)[itrig].accept();  // What is accept()? [Question from Eric Wang, 20240704]
-			trigRes->push_back(hltflag);
-			trigNames->push_back(trigName);
-
-			for (unsigned int JpsiTrig = 0; JpsiTrig < TriggersForJpsi_.size(); JpsiTrig++)
-			{
-				if (TriggersForJpsi_[JpsiTrig] == triggerNames_.triggerName(itrig))
-				{
-					JpsiMatchTrig[JpsiTrig] = hltflag;
-					break;  // Why break here? [Question from Eric Wang, 20240704]
-				}
-
-			} // Jpsi Trigger
-
-			for (unsigned int UpsTrig = 0; UpsTrig < TriggersForUpsilon_.size(); UpsTrig++)
-			{
-				if (TriggersForUpsilon_[UpsTrig] == triggerNames_.triggerName(itrig))
-				{
-					UpsilonMatchTrig[UpsTrig] = hltflag;
-					break;
-				}
-			} // Upsilon Trigger
-		}
-
-		for (int MatchTrig = 0; MatchTrig < nJpsitrigger; MatchTrig++)
-		{
-			MatchTriggerNames->push_back(TriggersForJpsi_[MatchTrig]);
-		}
-
-	} // end of HLT trigger info
-
-	std::string vrtxFilter("hltVertexmumuFilterUpsilonMuon");
-	std::string L3Filter("hltTripleMuL3PreFiltered0");
-
-	edm::ESHandle<TransientTrackBuilder> theB = iSetup.getHandle(theTTBuilderToken_);
-
-	edm::Handle<L1GlobalTriggerReadoutRecord> gtRecord;
-	iEvent.getByToken(gtRecordToken_, gtRecord);
-	const DecisionWord dWord = gtRecord->decisionWord();
-
-	const TechnicalTriggerWord ttWord = gtRecord->technicalTriggerWord();
-	for (unsigned int l1i = 0; l1i != ttWord.size(); ++l1i)
-	{
-		L1TT->push_back(ttWord.at(l1i));
-	}
-
-    // Get the primary vertex information [Annotated by Eric Wang, 20240704]
-    //      Initialization
-	Vertex thePrimaryV;
-	Vertex theRecoVtx;
-	Vertex theBeamSpotV;
-	BeamSpot beamSpot;
-	math::XYZPoint RefVtx;
-
-	// get BeamSplot
-	edm::Handle<reco::BeamSpot> beamSpotHandle;
-	iEvent.getByToken(gtbeamspotToken_, beamSpotHandle);
-	if (beamSpotHandle.isValid())
-	{
-		beamSpot = *beamSpotHandle;
-		theBeamSpotV = Vertex(beamSpot.position(), beamSpot.covariance3D());
-	}
-	else
-	{
-		cout << "No beam spot available from EventSetup" << endl;
-	}
-
-	Handle<VertexCollection> recVtxs;
-	iEvent.getByToken(gtprimaryVtxToken_, recVtxs);
-	unsigned int nVtxTrks = 0;
-
-	///////////////////////////////////////////////////////////////////////
-	////////////////Check Lines below for Primary Vertex///////////////////
-	///////////////////////////////////////////////////////////////////////
-
-    // Determine the good vertices [Annotated by Eric Wang, 20240704]
-
-	int myNGoodPrimVtx = 0;
-	for (unsigned myi = 0; myi < recVtxs->size(); myi++)
-	{
-        //Selection criteria:  ndof    -> "enough particle info"(?)     [Annotated by Eric Wang, 20240704]
-        //                      z, rhp  -> "not too far off"            [Annotated by Eric Wang, 20240704]
-		if ((*recVtxs)[myi].ndof() >= 5 
-                && ( fabs((*recVtxs)[myi].z()) <= 24 && fabs((*recVtxs)[myi].position().rho())) <= 2.0)
-		{
-			myNGoodPrimVtx++;
-		}
-	}
-	nGoodPrimVtx = myNGoodPrimVtx;
-
-	if (recVtxs->begin() != recVtxs->end())  // At least one vertex [Annotated by Eric Wang, 20240704]
-	{
-		if (addXlessPrimaryVertex_ || resolveAmbiguity_)  // What criterion? [Question from Eric Wang, 20240704]
-		{
-			thePrimaryV = Vertex(*(recVtxs->begin()));
-		}
-		else
-		{
-            // TO_IMPR_CPP11 (for(auto ...)) [Tagged by Eric Wang, 20240704]
-			for (reco::VertexCollection::const_iterator vtx = recVtxs->begin(); vtx != recVtxs->end(); ++vtx)
-			{
-                // Choose the vertex with the most tracks [Annotated by Eric Wang, 20240704]
-				if (nVtxTrks < vtx->tracksSize())   
-				{
-					nVtxTrks = vtx->tracksSize();
-					thePrimaryV = Vertex(*vtx);
-				}
-			}
-		}
-	}
-	else
-	{
-        // If no vertex is found, use the beam spot as the primary vertex [Annotated by Eric Wang, 20240704]
-		thePrimaryV = Vertex(beamSpot.position(), beamSpot.covariance3D());
-	}
-
-    // Vertex reconstruction results [Annotated by Eric Wang, 20240704]
-	RefVtx = thePrimaryV.position();
-	priVtxX = (thePrimaryV.position().x());
-	priVtxY = (thePrimaryV.position().y());
-	priVtxZ = (thePrimaryV.position().z());
-	priVtxXE = (thePrimaryV.xError());
-	priVtxYE = (thePrimaryV.yError());
-	priVtxZE = (thePrimaryV.zError());
-	priVtxChiNorm = (thePrimaryV.normalizedChi2());
-	priVtxChi = thePrimaryV.chi2();
-	priVtxCL = ChiSquaredProbability((double)(thePrimaryV.chi2()), (double)(thePrimaryV.ndof()));
-
-	edm::Handle<edm::View<pat::Muon> > thePATMuonHandle; //  MINIAOD
-	iEvent.getByToken(gtpatmuonToken_, thePATMuonHandle);
-	edm::Handle<edm::View<pat::PackedCandidate> > theTrackHandle;   //  MINIAOD
-	iEvent.getByToken(trackToken_,                theTrackHandle);  //  MINIAOD
-	std::vector<edm::View<pat::PackedCandidate>::const_iterator> nonMuonPionTrack;
-
-	// Copy tracks iterators
- 	for (edm::View<pat::PackedCandidate>::const_iterator iTrackc = theTrackHandle->begin(); // MINIAOD 
-	            iTrackc != theTrackHandle->end(); ++iTrackc                                 )
-	{
-		nonMuonPionTrack.push_back(iTrackc);
-	}
-
-    // Initialize the muon track block [Annotated by Eric Wang, 20240704]
-
-	if (thePATMuonHandle->size() >= 2) // Require at least 2 muons present [Annotated by Eric Wang, 20240704]
-	{
-		vector<std::string> theInputVariables;
-		theInputVariables.push_back("validFrac");
-		theInputVariables.push_back("globalChi2");
-		theInputVariables.push_back("pt");
-		theInputVariables.push_back("eta");
-		theInputVariables.push_back("segComp");
-		theInputVariables.push_back("chi2LocMom");
-		theInputVariables.push_back("chi2LocPos");
-		theInputVariables.push_back("glbTrackProb");
-		theInputVariables.push_back("NTrkVHits");
-		theInputVariables.push_back("NTrkEHitsOut");
-		ReadBDT muonID(theInputVariables);
-		vector<double> inputValues;
-		inputValues.resize(10, 0.);
-
-		// fill muon track block
-        // TO_IMPR_CPP11 (for(auto ...)) [Tagged by Eric Wang, 20240704]
-		for (edm::View<pat::Muon>::const_iterator iMuonP =  thePATMuonHandle->begin(); //  MINIAOD
-			                                      iMuonP != thePATMuonHandle->end(); ++iMuonP)
-		{
-			// push back all muon information
-			++nMu;
-			muIsPatLooseMuon->push_back(iMuonP->isLooseMuon());
-			muIsPatTightMuon->push_back(iMuonP->isTightMuon(thePrimaryV));
-			muIsPatSoftMuon->push_back(iMuonP->isSoftMuon(thePrimaryV));
-			muIsPatMediumMuon->push_back(iMuonP->isMediumMuon());
-
-			muPx->push_back(iMuonP->px());
-			muPy->push_back(iMuonP->py());
-			muPz->push_back(iMuonP->pz());
-			muCharge->push_back(iMuonP->charge());
-
-			int goodSoftMuonNewIlseMod = 0;
-			int goodSoftMuonNewIlse = 0;
-			int goodLooseMuonNew = 0;
-			int goodLooseMuon = 0;
-			int goodTightMuon = 0;
-			
-			
-			// Find and delete muon Tracks in PionTracks
-			for (std::vector<edm::View<pat::PackedCandidate>::const_iterator>::const_iterator iTrackfID  = nonMuonPionTrack.begin(); // MINIAOD
-			                                                                                  iTrackfID != nonMuonPionTrack.end(); 
-                                                                                            ++iTrackfID                             )
-			{
-				if(iMuonP->track().isNull())
-				{
-					continue;
-				}
-				edm::View<pat::PackedCandidate>::const_iterator iTrackf = *(iTrackfID);		
-
-                // Why call the function outside? [Question from Eric Wang, 20240704]
-				iMuonP->track()->px();
-
-                // Match using the momentum. [Annotated by Eric Wang, 20240704]                  
-				if (   iTrackf->px() == iMuonP->track()->px() 
-                    && iTrackf->py() == iMuonP->track()->py() 
-                    && iTrackf->pz() == iMuonP->track()->pz())
-				{
-					nonMuonPionTrack.erase(iTrackfID);
-					iTrackfID = iTrackfID - 1;
-				}
-			}
-			// float mymuMVABs = -1;
-
-            // Check if match any HLT for Jpsi and Upsilon [Annotated by Eric Wang, 20240704]
-            // TO_ENC [Tagged by Eric Wang, 20240704]
-
-			bool isJpsiTrigMatch = false;
-
-			for (unsigned int JpsiTrig = 0; JpsiTrig < TriggersForJpsi_.size(); JpsiTrig++)
-			{
-				if (JpsiMatchTrig[JpsiTrig] != 0)
-				{
-					const pat::TriggerObjectStandAloneCollection muJpsiHLTMatches = iMuonP->triggerObjectMatchesByFilter(FiltersForJpsi_[JpsiTrig]);
-					bool pass1 = muJpsiHLTMatches.size() > 0;
-					if (pass1)
-						isJpsiTrigMatch = true;
-				}
-			}
-
-			muIsJpsiTrigMatch->push_back(isJpsiTrigMatch);
-
-            // TO_ENC [Tagged by Eric Wang, 20240704]
-			bool isUpsTrigMatch = false;
-
-			for (unsigned int UpsTrig = 0; UpsTrig < TriggersForUpsilon_.size(); UpsTrig++)
-			{
-				if (UpsilonMatchTrig[UpsTrig] != 0)
-				{
-					const pat::TriggerObjectStandAloneCollection muUpsHLTMatches =
-						iMuonP->triggerObjectMatchesByFilter(FiltersForUpsilon_[UpsTrig]);
-					bool pass1 = muUpsHLTMatches.size() > 0;
-					if (pass1)
-						isUpsTrigMatch = true;
-				}
-			}
-
-			muIsUpsTrigMatch->push_back(isUpsTrigMatch);
-
-			munMatchedSeg->push_back(-1); // MINIOAOD
-
-			int muL3TriMuonVrtxFilter = 0, muSingleMuL3Filter = 0;
-
-			// Checking Single Trigger
-			for (unsigned int UpsTrig = 0; UpsTrig < TriggersForUpsilon_.size(); UpsTrig++)
-			{
-				if (UpsilonMatchTrig[UpsTrig] != 0)
-				{
-					const pat::TriggerObjectStandAloneCollection muMatchVrxtFilter 
-                                 = iMuonP->triggerObjectMatchesByFilter(vrtxFilter);
-					const pat::TriggerObjectStandAloneCollection muMatchL3Filter   
-                                 = iMuonP->triggerObjectMatchesByFilter(L3Filter);
-
-					muL3TriMuonVrtxFilter = (muMatchVrxtFilter.size() > 0);
-					muSingleMuL3Filter    = (muMatchL3Filter.size()   > 0);
-				}
-			}
-			muUpsVrtxMatch->push_back(muL3TriMuonVrtxFilter); //  MINIAOD
-			muL3TriggerMatch->push_back(muSingleMuL3Filter);  //  MINIAOD
-		}
-	} // if two muons
-
-	if (doMC)
-	{
-		// pion loop
-
-        // Compare direct MC results and RECO results [Annotated by Eric Wang, 20240704]
-        //      For those that matches within the precision limit, store the momentum 
-
-        // TO_IMPR_CPP11 (for(auto ...)) [Tagged by Eric Wang, 20240704]
-		for (edm::View<pat::PackedCandidate>::const_iterator iTrack = theTrackHandle->begin(); // MINIAOD
-			                                                iTrack != theTrackHandle->end(); ++iTrack)
-		{
-			TLorentzVector RECO_pip4;
-			RECO_pip4.SetXYZM(iTrack->px(), iTrack->py(), iTrack->pz(), myPiMass);
-			if (fabs(MC_pi1p4.Pt() - RECO_pip4.Pt()) < 0.08 * MC_pi1p4.Pt() && MC_pi1p4.DeltaR(RECO_pip4) < 0.1)
-			{
-				Match_pi1px->push_back(RECO_pip4.Px());
-				Match_pi1py->push_back(RECO_pip4.Py());
-				Match_pi1pz->push_back(RECO_pip4.Pz());
-			}
-			if ((fabs(MC_pi2p4.Pt() - RECO_pip4.Pt()) < 0.08 * MC_pi2p4.Pt() && MC_pi2p4.DeltaR(RECO_pip4) < 0.1))
-			{
-				Match_pi2px->push_back(RECO_pip4.Px());
-				Match_pi2py->push_back(RECO_pip4.Py());
-				Match_pi2pz->push_back(RECO_pip4.Pz());
-			}
-		}
-	} // if(doMC)
-
-    // Set the mass constraints for further reconstruction. [Annotated by Eric Wang, 20240704]
-
-	// It takes a lot less memory out of the loop
-	KinematicConstraint *Jpsi_cs = new MassKinematicConstraint(myJpsiMass, myJpsiMassErr);
-	KinematicConstraint *Jpsi_cs34 = new MassKinematicConstraint(myJpsiMass, myJpsiMassErr);
-	double pionPTcut = 0.25;
-	double pionDRcut = 0.7;
-	double vtxProbPreCut = 1.0e-7;
-
-    // booleans marking whether the muon pair satisfies the mass constraint
-    bool isJpsiMuPair = false;
-    bool isUpsMuPair  = false;
-    bool isGoodVtxFit = false;
-
-    // Muon factory
-    KinematicParticleFactoryFromTransientTrack muPairFactory;
-
-    // Will be working reco from 3 pairs of muons. 
-	if (thePATMuonHandle->size() < 6)
-	{
-		return;
-	}
-
-    // Temporary storage for the muon pair [Annotated by Eric Wang, 20240704]
-    std::vector<RefCountedKinematicParticle> transMuonPair;
-    std::vector<uint>                        transMuPairId;
-    ParticleMass muMass = myMuMass;
-    float muMassSigma   = myMuMassErr;
-    float chi2 = 0.;
-	float ndof = 0.;
-
-    /**************************************************************************
-     * [Section]
-     *      Muon pairing and preselection with vertex fitting
-     * [Implementation]
-     *      - Loop over all existing muon pairs.
-     *      - Apply kinematic and mass window constraints.
-     *      - Fit the vertex to judge.
-     *      - Classify muons pairs as Jpsi or Upsilon candidates with mass.
-     * [Note]
-     *      The intermidiate storage for muon pair stores the muons as 
-     *      RefCountedKinematicParticle. This saves repeated reco.
-    **************************************************************************/
-
-    // Candidates of muon pairs from Jpsi or Upsilon
-    using muon_t   = RefCountedKinematicParticle;
-    using muList_t = std::pair< vector<muon_t>, vector<uint> >;
-    std::vector< muList_t > muPairCand_Jpsi, muPairCand_Ups;
-
-    // Selection for the muon candidates
-    for(auto iMuon1 =  thePATMuonHandle->begin(); 
-             iMuon1 != thePATMuonHandle->end(); ++iMuon1){
-        TrackRef muTrack1 = iMuon1->track();
-        if (muTrack1.isNull()){
-            continue;
+    using namespace edm;
+    using namespace reco;
+    using namespace std;
+
+    runNum  = iEvent.id().run();
+    evtNum  = iEvent.id().event();
+    lumiNum = iEvent.id().luminosityBlock();
+
+    const MagneticField &bFieldHandle = iSetup.getData(magneticFieldToken_);
+
+    // Step 1: MC gen-level info
+    if (doMC) {
+        processMCGenInfo(iEvent);
+    }
+    
+    // Step 2: HLT trigger info
+    processHLTInfo(iEvent);
+
+    // Step 3: L1 trigger
+    edm::Handle<L1GlobalTriggerReadoutRecord> gtRecord;
+    iEvent.getByToken(gtRecordToken_, gtRecord);
+    if (gtRecord.isValid()) {
+        const TechnicalTriggerWord ttWord = gtRecord->technicalTriggerWord();
+        for (unsigned int l1i = 0; l1i != ttWord.size(); ++l1i) {
+            L1TT->push_back(ttWord.at(l1i));
         }
-        // Build transient track and store.
-        TransientTrack transTrk1(muTrack1, &(bFieldHandle));
-        transMuonPair.push_back(muPairFactory.particle(transTrk1, muMass, chi2, ndof, muMassSigma));
-        transMuPairId.push_back(iMuon1 - thePATMuonHandle->begin());
-
-        // Next muon candidate.
-        for(auto iMuon2  = iMuon1 + 1; 
-                 iMuon2 != thePATMuonHandle->end(); ++iMuon2){
-            // Build transient track and store.
-            TrackRef muTrack2 = iMuon2->track();
-            if (muTrack2.isNull()){
-                continue;
-            }
-            TransientTrack transTrk2(muTrack2, &(bFieldHandle));
-            // Charge requirement.
-            if ((iMuon1->charge() + iMuon2->charge()) != 0){
-				continue;
-			}
-            // Dynamics selection. A very crude selection.
-            // Involves more calculation and is therefore done after kinematics.
-            isJpsiMuPair = (1. < (iMuon1->p4() + iMuon2->p4()).mass()
-                              && (iMuon1->p4() + iMuon2->p4()).mass() < 4.);
-            isUpsMuPair  = (8. < (iMuon1->p4() + iMuon2->p4()).mass()
-                              && (iMuon1->p4() + iMuon2->p4()).mass() < 12.);
-            if((!isJpsiMuPair) && (!isUpsMuPair)){
-                continue;
-            }
-            transMuonPair.push_back(muPairFactory.particle(transTrk2,  muMass, 
-                                                           chi2, ndof, muMassSigma) );
-            transMuPairId.push_back(iMuon2 - thePATMuonHandle->begin());
-            // Judging with vertex fitting.
-            if(!particlesToVtx(transMuonPair)){
-                continue;
-            }
-            // Passing all the checks, store the muon pair as pairs of RefCountedKinematicParticle.
-            if(isJpsiMuPair){
-                muPairCand_Jpsi.push_back(
-                    std::make_pair(transMuonPair, transMuPairId) );
-            }
-            if(isUpsMuPair){
-                muPairCand_Ups.push_back(
-                    std::make_pair(transMuonPair, transMuPairId) );
-            }
-            // Clear the transient muon pair for the next pair.
-            transMuonPair.pop_back();
-        }
-        transMuonPair.pop_back();
     }
 
-	//  get X and MyFourMuon cands
+    // Step 4: Primary vertex reconstruction
+    reconstructPrimaryVertex(iEvent);
 
-    /**************************************************************************
-     * [Section]
-     *      Jpsi and Upsilon reconstruction and fitting.
-     * [Implementation]
-     *      - Loop over all existing muon pairs.
-     *      - Fit the primary vertex for Jpsi and Upsilon candidates.
-     *      - Store the fitting results into temporary vectors.
-     * [Note]
-     *      Mass constriant is not applied to any quarkonia candidates.
-     *      TO IMPR: Multiple candidate issue.
-     *      - Difficulty: Identify the "multi-candidate" case. (Hashing?)
-     *      - Distinction between Jpsi and Upsilon is important!
-     *      - Possible selection: massErr ratio; total pT^2;
-     *      - Add event number 
-    **************************************************************************/
-    // Classes for the fitting process.
-    RefCountedKinematicTree vtxFitTree_Jpsi_1;
-    RefCountedKinematicTree vtxFitTree_Jpsi_2;
-    RefCountedKinematicTree vtxFitTree_Ups;
-    RefCountedKinematicTree vtxFitTree_Pri;
+    // Step 5: Get muon and track handles
+    iEvent.getByToken(gtpatmuonToken_, thePATMuonHandle_);
+    iEvent.getByToken(trackToken_, theTrackHandle_);
+    edm::Handle<reco::GenParticleCollection> genParticles;
+    if (doMC) {
+        iEvent.getByToken(genParticlesToken_, genParticles);
+    }
 
-    // Classes for secondary particles (Jpsi and Upsilon)
-    RefCountedKinematicParticle Jpsi_1_Fit_noMC, Jpsi_2_Fit_noMC, Ups_Fit_noMC, Pri_Fit_noMC;
-    RefCountedKinematicVertex   Jpsi_1_Vtx_noMC, Jpsi_2_Vtx_noMC, Ups_Vtx_noMC, Pri_Vtx_noMC;
-    KinematicParameters         Jpsi_1_Para,     Jpsi_2_Para,     Ups_Para,     Pri_Para;
-    std::vector< RefCountedKinematicParticle >  interOnia;
+    // Build non-muon track list
+    nonMuonTrack_.clear();
+    if (theTrackHandle_.isValid()) {
+        for (auto iTrack = theTrackHandle_->begin(); iTrack != theTrackHandle_->end(); ++iTrack) {
+            nonMuonTrack_.push_back(iTrack);
+        }
+    }
 
-    // Markers for fitting. Only marks if a result is constructed
-    bool isValidJpsi_1, isValidJpsi_2, isValidUps, isValidPri;
-    // Fitted mass error is also stricter marker for fitting.
-    double tmp_Jpsi_1_massErr, tmp_Jpsi_2_massErr, tmp_Ups_massErr, tmp_Pri_massErr;
-    // Temporary storage for particle dynamics.
-    double tmp_pt, tmp_eta, tmp_phi;
+    // Step 6: Fill the muon block for all available muons.
+    if (thePATMuonHandle_.isValid()) {
+        fillMuonBlock(iEvent, iSetup, thePrimaryV_);
+    }
 
+    // Step 7: MC matching of tracks
+    if (doMC && thePATMuonHandle_.isValid() && theTrackHandle_.isValid()) {
+        doMCGenMatching(thePATMuonHandle_, theTrackHandle_);
+    }
 
-    for(auto muPair_Jpsi_1  = muPairCand_Jpsi.begin(); 
-             muPair_Jpsi_1 != muPairCand_Jpsi.end();  muPair_Jpsi_1++){
-        for(auto muPair_Jpsi_2  = muPair_Jpsi_1 + 1; 
-                 muPair_Jpsi_2 != muPairCand_Jpsi.end(); muPair_Jpsi_2++){
-            // Check if the muon pairs overlap.
-            if(isOverlapPair(*muPair_Jpsi_1, *muPair_Jpsi_2)){
-                continue;
+    const auto shouldFillCurrentEvent = [&]() {
+        const bool hasAcceptedCandidate = !Pri_VtxProb->empty();
+        if (hasAcceptedCandidate) {
+            return true;
+        }
+        return doMC && !requireAcceptedCandidatesForMonteCarloTree_;
+    };
+
+    // Step 8: Pair muons
+    if (!thePATMuonHandle_.isValid() || thePATMuonHandle_->size() < minMuonCount_) {
+        if (shouldFillCurrentEvent()) {
+            X_One_Tree_->Fill();
+        }
+        clearEventData();
+        return;
+    }
+
+    pairMuons(thePATMuonHandle_, bFieldHandle);
+
+    // Step 9: Pair tracks into meson candidates
+    bool needsTrackPairs = (analysisChannel_ == AnalysisChannel::JpsiJpsiPhi ||
+                            analysisChannel_ == AnalysisChannel::JpsiUpsPhi);
+    if (needsTrackPairs && !theTrackHandle_.isValid()) {
+        if (shouldFillCurrentEvent()) {
+            X_One_Tree_->Fill();
+        }
+        clearEventData();
+        return;
+    }
+    if (needsTrackPairs) {
+        pairTracks(nonMuonTrack_, bFieldHandle);
+    }
+
+    // Step 10: Combine candidates and fill branches
+    combineCandidates(theBeamSpotV_, genParticles);
+
+    if (shouldFillCurrentEvent()) {
+        X_One_Tree_->Fill();
+    }
+
+    // Clear everything
+    clearEventData();
+}
+
+/*****************************************************************************
+ * Step 1: Process MC gen-level truth
+ *****************************************************************************/
+void MultiLepPAT::processMCGenInfo(const edm::Event &iEvent)
+{
+    handleToNtupleIndex_.clear();
+
+    edm::Handle<reco::GenParticleCollection> genParticles;
+    iEvent.getByToken(genParticlesToken_, genParticles);
+    if (!genParticles.isValid())
+        return;
+
+    // Flat gen-particle storage: store all relevant particles
+    // (J/psi=443, Upsilon=553, phi=333, mu=13, K=321)
+    static const std::unordered_set<int> interestingPdgIds = {443, 553, 333, 13, 321};
+    std::unordered_map<const reco::Candidate *, unsigned int> addressToHandleIndex;
+    std::vector<unsigned int> storedHandleIndices;
+
+    for (unsigned int i = 0; i < genParticles->size(); ++i) {
+        addressToHandleIndex[&genParticles->at(i)] = i;
+    }
+
+    for (size_t i = 0; i < genParticles->size(); ++i) {
+        const auto &particle = genParticles->at(i);
+        int absPdgId = std::abs(particle.pdgId());
+        if (interestingPdgIds.count(absPdgId) || particle.numberOfDaughters() >= 2) {
+            // Store if it's a relevant particle or a mother with daughters
+            bool isInteresting = interestingPdgIds.count(absPdgId);
+            bool hasMuDaughters = false;
+            for (unsigned int d = 0; d < particle.numberOfDaughters(); ++d) {
+                if (std::abs(particle.daughter(d)->pdgId()) == 13)
+                    hasMuDaughters = true;
             }
-            for(auto muPair_Ups  = muPairCand_Ups.begin(); 
-                     muPair_Ups != muPairCand_Ups.end(); muPair_Ups++){
-                // Check if the muon pairs overlap again.
-                if( isOverlapPair(*muPair_Jpsi_1, *muPair_Ups) || 
-                    isOverlapPair(*muPair_Jpsi_2, *muPair_Ups)   ){
-                    continue;
+            if (isInteresting || hasMuDaughters) {
+                const int ntupleIndex = MC_GenPart_pdgId->size();
+                MC_GenPart_pdgId->push_back(particle.pdgId());
+                MC_GenPart_status->push_back(particle.status());
+                int motherPdgId = 0;
+                if (particle.numberOfMothers() > 0) {
+                    motherPdgId = particle.mother(0)->pdgId();
                 }
-                // Initialize the marker for primary vertex
-                isValidPri = false;
-                // Start constructing the fit tree.
-                // Use particlesToVtx() to fit the quarkonia once more.
-                isValidJpsi_1 = particlesToVtx(vtxFitTree_Jpsi_1, muPair_Jpsi_1->first, "final Jpsi_1");
-                isValidJpsi_2 = particlesToVtx(vtxFitTree_Jpsi_2, muPair_Jpsi_2->first, "final Jpsi_2");
-                isValidUps    = particlesToVtx(vtxFitTree_Ups,    muPair_Ups->first,    "final Ups");
-                // Store the index of the muons.
-                Jpsi_1_mu_1_Idx->push_back(muPair_Jpsi_1->second[0]);
-                Jpsi_1_mu_2_Idx->push_back(muPair_Jpsi_1->second[1]);
-                Jpsi_2_mu_1_Idx->push_back(muPair_Jpsi_2->second[0]);
-                Jpsi_2_mu_2_Idx->push_back(muPair_Jpsi_2->second[1]);
-                Ups_mu_1_Idx->push_back(muPair_Ups->second[0]);
-                Ups_mu_2_Idx->push_back(muPair_Ups->second[1]);
-                // Check if all fit trees give non-null results.
-                if(isValidJpsi_1 && isValidJpsi_2 && isValidUps){
-                    // Extract the vertex and the particle parameters from valid results.
-                    // Here, when an invalid fit is detected, the massErr is set to -9.
-                    extractFitRes(vtxFitTree_Jpsi_1, Jpsi_1_Fit_noMC, Jpsi_1_Vtx_noMC, tmp_Jpsi_1_massErr);
-                    extractFitRes(vtxFitTree_Jpsi_2, Jpsi_2_Fit_noMC, Jpsi_2_Vtx_noMC, tmp_Jpsi_2_massErr);
-                    extractFitRes(vtxFitTree_Ups,       Ups_Fit_noMC,    Ups_Vtx_noMC,    tmp_Ups_massErr);
-                    // Look for "Good Fit". Judge by the massErr.
-                    if(tmp_Jpsi_1_massErr >= 0.0 && tmp_Jpsi_2_massErr >= 0.0 && tmp_Ups_massErr >= 0.0){
-                        // Initialize the final fitting marker and the secondary particles.
-                        interOnia.push_back(Jpsi_1_Fit_noMC);
-                        interOnia.push_back(Jpsi_2_Fit_noMC);
-                        interOnia.push_back(Ups_Fit_noMC);
-                        // Fit the quarkonia to the same vertex
-                        isValidPri = particlesToVtx(vtxFitTree_Pri, interOnia, "primary vertex");
+                MC_GenPart_motherPdgId->push_back(motherPdgId);
+                MC_GenPart_handleIndex->push_back(static_cast<int>(i));
+                MC_GenPart_px->push_back(particle.px());
+                MC_GenPart_py->push_back(particle.py());
+                MC_GenPart_pz->push_back(particle.pz());
+                MC_GenPart_mass->push_back(particle.mass());
+                MC_GenPart_pt->push_back(particle.pt());
+                MC_GenPart_eta->push_back(particle.eta());
+                MC_GenPart_phi->push_back(particle.phi());
+                handleToNtupleIndex_[i] = ntupleIndex;
+                storedHandleIndices.push_back(i);
+            }
+        }
+    }
+
+    for (unsigned int handleIndex : storedHandleIndices) {
+        const auto &particle = genParticles->at(handleIndex);
+        int motherGenIdx = -1;
+
+        if (particle.numberOfMothers() > 0) {
+            motherGenIdx = resolveStoredGenIdx(
+                particle.mother(0), addressToHandleIndex, handleToNtupleIndex_);
+        }
+
+        MC_GenPart_motherGenIdx->push_back(motherGenIdx);
+    }
+}
+
+/*****************************************************************************
+ * Step 2: HLT trigger processing
+ *****************************************************************************/
+void MultiLepPAT::processHLTInfo(const edm::Event &iEvent)
+{
+    edm::Handle<edm::TriggerResults> hltresults;
+    bool Error_t = false;
+    unsigned int nJpsitrigger = TriggersForJpsi_.size();
+    unsigned int nUpstrigger  = TriggersForUpsilon_.size();
+    try {
+        iEvent.getByToken(gttriggerToken_, hltresults);
+    } catch (...) {
+        Error_t = true;
+    }
+    if (Error_t || !hltresults.isValid()) {
+        return;
+    }
+
+    int ntrigs = hltresults->size();
+    if (ntrigs == 0) return;
+
+    edm::TriggerNames triggerNames_ = iEvent.triggerNames(*hltresults);
+
+    for (unsigned int JpsiTrig = 0; JpsiTrig < nJpsitrigger; JpsiTrig++) {
+        JpsiMatchTrig[JpsiTrig] = 0;
+    }
+    for (unsigned int UpsTrig = 0; UpsTrig < nUpstrigger; UpsTrig++) {
+        UpsilonMatchTrig[UpsTrig] = 0;
+    }
+
+    for (int itrig = 0; itrig < ntrigs; itrig++) {
+        std::string trigName = triggerNames_.triggerName(itrig);
+        int hltflag = (*hltresults)[itrig].accept();
+        trigRes->push_back(hltflag);
+        trigNames->push_back(trigName);
+
+        for (unsigned int JpsiTrig = 0; JpsiTrig < nJpsitrigger; JpsiTrig++) {
+            std::regex pattern(".*" + TriggersForJpsi_[JpsiTrig] + ".*");
+            if (std::regex_search(trigName, pattern)) {
+                JpsiMatchTrig[JpsiTrig] = hltflag;
+                if (hltflag) {
+                    bool isDuplicate = false;
+                    for (unsigned int mt = 0; mt < MatchJpsiTrigNames->size(); mt++) {
+                        if (trigName == MatchJpsiTrigNames->at(mt)) {
+                            isDuplicate = true;
+                            break;
+                        }
+                    }
+                    if (!isDuplicate) {
+                        MatchJpsiTrigNames->push_back(trigName);
                     }
                 }
-                // Work with all fit results above. (Jpsi_1, Jpsi_2, Ups, Pri)
-                // Primary vertex fitting comes first.
-                if(isValidPri){
-                    // Extract the vertex and the particle parameters from valid results.
-                    extractFitRes(vtxFitTree_Pri, Pri_Fit_noMC, Pri_Vtx_noMC, tmp_Pri_massErr);
-                    getDynamics(Pri_Fit_noMC, tmp_pt, tmp_eta, tmp_phi);
-                    // Store the fitting results into temporary vectors.
-                    Pri_mass->push_back(Pri_Fit_noMC->currentState().mass());
-                    Pri_massErr->push_back(tmp_Pri_massErr);
-                    Pri_ctau->push_back(   GetcTau(   Pri_Vtx_noMC, Pri_Fit_noMC, theBeamSpotV));
-                    Pri_ctauErr->push_back(GetcTauErr(Pri_Vtx_noMC, Pri_Fit_noMC, theBeamSpotV));
-                    Pri_VtxProb->push_back(ChiSquaredProbability((double)(Pri_Vtx_noMC->chiSquared()), 
-                                                                 (double)(Pri_Vtx_noMC->degreesOfFreedom())));
-                    Pri_Chi2->push_back(Pri_Vtx_noMC->chiSquared());
-                    Pri_ndof->push_back(Pri_Vtx_noMC->degreesOfFreedom());
-                    Pri_px->push_back(Pri_Fit_noMC->currentState().kinematicParameters().momentum().x());
-                    Pri_py->push_back(Pri_Fit_noMC->currentState().kinematicParameters().momentum().y()); 
-                    Pri_pz->push_back(Pri_Fit_noMC->currentState().kinematicParameters().momentum().z());
-                    Pri_phi->push_back(tmp_phi);
-                    Pri_eta->push_back(tmp_eta);
-                    Pri_pt->push_back(tmp_pt);
+                break;
+            }
+        }
+
+        // Upsilon trigger matching
+        for (unsigned int UpsTrig = 0; UpsTrig < nUpstrigger; UpsTrig++) {
+            std::regex pattern(".*" + TriggersForUpsilon_[UpsTrig] + ".*");
+            if (std::regex_search(trigName, pattern)) {
+                UpsilonMatchTrig[UpsTrig] = hltflag;
+                if (hltflag) {
+                    bool isDuplicate = false;
+                    for (unsigned int mt = 0; mt < MatchUpsTrigNames->size(); mt++) {
+                        if (trigName == MatchUpsTrigNames->at(mt)) {
+                            isDuplicate = true;
+                            break;
+                        }
+                    }
+                    if (!isDuplicate) {
+                        MatchUpsTrigNames->push_back(trigName);
+                    }
                 }
-                else{
-                    // Store "error code" -999 for the primary vertex fitting.
-                    Pri_mass->push_back(-999);
-                    Pri_massErr->push_back(-999);
-                    Pri_ctau->push_back(-999);
-                    Pri_ctauErr->push_back(-999);
-                    Pri_VtxProb->push_back(-999);
-                    Pri_Chi2->push_back(-999);
-                    Pri_ndof->push_back(-999);
-                    Pri_px->push_back(-999);
-                    Pri_py->push_back(-999);
-                    Pri_pz->push_back(-999);
-                    Pri_phi->push_back(-999);
-                    Pri_eta->push_back(-999);
-                    Pri_pt->push_back(-999);
+                break;
+            }
+        }
+    }
+}
+
+/*****************************************************************************
+ * Step 3: Primary vertex reconstruction
+ *****************************************************************************/
+void MultiLepPAT::reconstructPrimaryVertex(const edm::Event &iEvent)
+{
+    BeamSpot beamSpot;
+    edm::Handle<reco::BeamSpot> beamSpotHandle;
+    iEvent.getByToken(gtbeamspotToken_, beamSpotHandle);
+    if (beamSpotHandle.isValid()) {
+        beamSpot = *beamSpotHandle;
+        theBeamSpotV_ = Vertex(beamSpot.position(), beamSpot.covariance3D());
+    }
+
+    edm::Handle<VertexCollection> recVtxs;
+    iEvent.getByToken(gtprimaryVtxToken_, recVtxs);
+
+    // Count good vertices using configurable cuts
+    int myNGoodPrimVtx = 0;
+    for (unsigned myi = 0; myi < recVtxs->size(); myi++) {
+        if ((*recVtxs)[myi].ndof() >= pvNdofMin_ &&
+            fabs((*recVtxs)[myi].z()) <= pvMaxAbsZ_ &&
+            fabs((*recVtxs)[myi].position().rho()) <= pvMaxRho_) {
+            myNGoodPrimVtx++;
+        }
+    }
+    nGoodPrimVtx = myNGoodPrimVtx;
+
+    // Store ALL PVs information
+    if (storeAllPVs_) {
+        nRecVtx = recVtxs->size();
+        for (unsigned ipv = 0; ipv < recVtxs->size(); ++ipv) {
+            const auto& vtx = (*recVtxs)[ipv];
+            RecVtx_x->push_back(vtx.x());
+            RecVtx_y->push_back(vtx.y());
+            RecVtx_z->push_back(vtx.z());
+            RecVtx_xErr->push_back(vtx.xError());
+            RecVtx_yErr->push_back(vtx.yError());
+            RecVtx_zErr->push_back(vtx.zError());
+            RecVtx_chi2->push_back(vtx.chi2());
+            RecVtx_ndof->push_back(vtx.ndof());
+            RecVtx_nTracks->push_back(vtx.nTracks());
+
+            double vtxProb = -9;
+            try {
+                vtxProb = ChiSquaredProbability(vtx.chi2(), vtx.ndof());
+            } catch (...) { vtxProb = -9; }
+            RecVtx_vtxProb->push_back(vtxProb);
+        }
+    } else {
+        nRecVtx = 0;
+    }
+
+    if (recVtxs->begin() != recVtxs->end()) {
+        if (pvSelectionMode_ == "mostTracks") {
+            unsigned int nVtxTrks = 0;
+            for (auto vtx = recVtxs->begin(); vtx != recVtxs->end(); ++vtx) {
+                if (nVtxTrks < vtx->tracksSize()) {
+                    nVtxTrks = vtx->tracksSize();
+                    thePrimaryV_ = Vertex(*vtx);
                 }
-                // Then comes the secondary particles (quarkonia).
-                if(isValidJpsi_1){
-                    getDynamics(Jpsi_1_Fit_noMC, tmp_pt, tmp_eta, tmp_phi);
-                    Jpsi_1_mass->push_back(    Jpsi_1_Fit_noMC->currentState().mass());
-                    Jpsi_1_massDiff->push_back(Jpsi_1_Fit_noMC->currentState().mass() - myJpsiMass);
-                    Jpsi_1_massErr->push_back( tmp_Jpsi_1_massErr);
-                    Jpsi_1_ctau->push_back(   GetcTau(   Jpsi_1_Vtx_noMC, Jpsi_1_Fit_noMC, theBeamSpotV));
-                    Jpsi_1_ctauErr->push_back(GetcTauErr(Jpsi_1_Vtx_noMC, Jpsi_1_Fit_noMC, theBeamSpotV));
-                    Jpsi_1_Chi2->push_back(double(Jpsi_1_Vtx_noMC->chiSquared()));
-                    Jpsi_1_ndof->push_back(double(Jpsi_1_Vtx_noMC->degreesOfFreedom()));
-                    Jpsi_1_VtxProb->push_back(ChiSquaredProbability((double)(Jpsi_1_Vtx_noMC->chiSquared()), 
-                                                                    (double)(Jpsi_1_Vtx_noMC->degreesOfFreedom())));
-                    Jpsi_1_px->push_back(Jpsi_1_Fit_noMC->currentState().kinematicParameters().momentum().x());
-                    Jpsi_1_py->push_back(Jpsi_1_Fit_noMC->currentState().kinematicParameters().momentum().y());
-                    Jpsi_1_pz->push_back(Jpsi_1_Fit_noMC->currentState().kinematicParameters().momentum().z());
-                    Jpsi_1_phi->push_back(tmp_pt);
-                    Jpsi_1_eta->push_back(tmp_eta);
-                    Jpsi_1_pt->push_back(tmp_pt);
+            }
+        } else if (pvSelectionMode_ == "highestSumPt2") {
+            double maxSumPt2 = -1.0;
+            for (auto vtx = recVtxs->begin(); vtx != recVtxs->end(); ++vtx) {
+                double sumPt2 = 0.0;
+                for (auto trk = vtx->tracks_begin(); trk != vtx->tracks_end(); ++trk) {
+                    sumPt2 += (*trk)->pt() * (*trk)->pt();
                 }
-                else{
-                    // Store "error code" -9 for the secondary particles (quarkonia).
-                    Jpsi_1_mass->push_back(-9);
-                    Jpsi_1_massErr->push_back(-9);
-                    Jpsi_1_massDiff->push_back(-9);
-                    Jpsi_1_ctau->push_back(-9);
-                    Jpsi_1_ctauErr->push_back(-9);
-                    Jpsi_1_Chi2->push_back(-9);
-                    Jpsi_1_ndof->push_back(-9);
-                    Jpsi_1_VtxProb->push_back(-9);
-                    Jpsi_1_px->push_back(-9);
-                    Jpsi_1_py->push_back(-9);
-                    Jpsi_1_pz->push_back(-9);
-                    Jpsi_1_phi->push_back(-9);
-                    Jpsi_1_eta->push_back(-9);
-                    Jpsi_1_pt->push_back(-9);
+                if (sumPt2 > maxSumPt2) {
+                    maxSumPt2 = sumPt2;
+                    thePrimaryV_ = Vertex(*vtx);
                 }
-                if(isValidJpsi_2){
-                    getDynamics(Jpsi_2_Fit_noMC, tmp_pt, tmp_eta, tmp_phi);
-                    Jpsi_2_mass->push_back(    Jpsi_2_Fit_noMC->currentState().mass());
-                    Jpsi_2_massDiff->push_back(Jpsi_2_Fit_noMC->currentState().mass() - myJpsiMass);
-                    Jpsi_2_massErr->push_back( tmp_Jpsi_2_massErr);
-                    Jpsi_2_ctau->push_back(   GetcTau(   Jpsi_2_Vtx_noMC, Jpsi_2_Fit_noMC, theBeamSpotV));
-                    Jpsi_2_ctauErr->push_back(GetcTauErr(Jpsi_2_Vtx_noMC, Jpsi_2_Fit_noMC, theBeamSpotV));
-                    Jpsi_2_Chi2->push_back(double(Jpsi_2_Vtx_noMC->chiSquared()));
-                    Jpsi_2_ndof->push_back(double(Jpsi_2_Vtx_noMC->degreesOfFreedom()));
-                    Jpsi_2_VtxProb->push_back(ChiSquaredProbability((double)(Jpsi_2_Vtx_noMC->chiSquared()), 
-                                                                    (double)(Jpsi_2_Vtx_noMC->degreesOfFreedom())));
-                    Jpsi_2_px->push_back(Jpsi_2_Fit_noMC->currentState().kinematicParameters().momentum().x());
-                    Jpsi_2_py->push_back(Jpsi_2_Fit_noMC->currentState().kinematicParameters().momentum().y());
-                    Jpsi_2_pz->push_back(Jpsi_2_Fit_noMC->currentState().kinematicParameters().momentum().z());
-                    Jpsi_2_phi->push_back(tmp_pt);
-                    Jpsi_2_eta->push_back(tmp_eta);
-                    Jpsi_2_pt->push_back(tmp_pt);
+            }
+        } else {
+            // Default: "firstVertex" (equivalent to legacy addXlessPrimaryVertex=true)
+            thePrimaryV_ = Vertex(*(recVtxs->begin()));
+        }
+    } else {
+        thePrimaryV_ = Vertex(beamSpot.position(), beamSpot.covariance3D());
+    }
+
+    priVtxX = thePrimaryV_.position().x();
+    priVtxY = thePrimaryV_.position().y();
+    priVtxZ = thePrimaryV_.position().z();
+    priVtxXE = thePrimaryV_.xError();
+    priVtxYE = thePrimaryV_.yError();
+    priVtxZE = thePrimaryV_.zError();
+    priVtxChiNorm = thePrimaryV_.normalizedChi2();
+    priVtxChi = thePrimaryV_.chi2();
+    try {
+        priVtxCL = ChiSquaredProbability((double)(thePrimaryV_.chi2()),
+                                          (double)(thePrimaryV_.ndof()));
+    } catch (...) {
+        priVtxCL = -9;
+    }
+}
+
+/*****************************************************************************
+ * Step 4: Fill muon block
+ *****************************************************************************/
+void MultiLepPAT::fillMuonBlock(const edm::Event& iEvent,
+                                 const edm::EventSetup& iSetup,
+                                 const reco::Vertex& thePrimaryV)
+{
+    edm::Handle<edm::TriggerResults> hltresults;
+    try { iEvent.getByToken(gttriggerToken_, hltresults); } catch (...) {}
+
+    edm::Handle<VertexCollection> recVtxs;
+    iEvent.getByToken(gtprimaryVtxToken_, recVtxs);
+
+    edm::Handle<reco::GenParticleCollection> genParticles;
+    bool haveGenParticles = false;
+    edm::ProductID genProductId;
+    if (doMC) {
+        iEvent.getByToken(genParticlesToken_, genParticles);
+        haveGenParticles = genParticles.isValid();
+        if (haveGenParticles) {
+            genProductId = genParticles.id();
+        }
+    }
+
+    auto chargeCompatible = [](const pat::Muon &muon, const reco::GenParticle &gen) {
+        return gen.charge() == 0 || muon.charge() == gen.charge();
+    };
+
+    auto matchMuonFromPatRefs = [&](const pat::Muon &muon, float &bestChi2) {
+        int bestIdx = -1;
+        double bestChi2Value = recoGenMuonMatchChi2Max_;
+        bestChi2 = -1.f;
+
+        for (size_t genIdx = 0; genIdx < muon.genParticlesSize(); ++genIdx) {
+            const auto genRef = muon.genParticleRef(genIdx);
+            if (!genRef.isNonnull() || !genRef.isAvailable())
+                continue;
+            if (genRef.id() != genProductId || genRef.key() >= genParticles->size())
+                continue;
+
+            const auto mapIt = handleToNtupleIndex_.find(genRef.key());
+            if (mapIt == handleToNtupleIndex_.end())
+                continue;
+
+            const auto &gen = genParticles->at(genRef.key());
+            if (std::abs(gen.pdgId()) != 13 || !chargeCompatible(muon, gen))
+                continue;
+
+            const double chi2 = recoGenMuonChi2(muon, gen);
+            if (!std::isfinite(chi2) || chi2 >= bestChi2Value)
+                continue;
+
+            bestChi2Value = chi2;
+            bestIdx = mapIt->second;
+        }
+
+        if (bestIdx >= 0)
+            bestChi2 = static_cast<float>(bestChi2Value);
+
+        return bestIdx;
+    };
+
+    auto matchMuonByChi2 = [&](const pat::Muon &muon, float &bestChi2) {
+        int bestIdx = -1;
+        double bestChi2Value = recoGenMuonMatchChi2Max_;
+        bestChi2 = -1.f;
+
+        for (size_t genIdx = 0; genIdx < genParticles->size(); ++genIdx) {
+            const auto &gen = genParticles->at(genIdx);
+            if (std::abs(gen.pdgId()) != 13 || gen.status() != 1 || !chargeCompatible(muon, gen))
+                continue;
+
+            const auto mapIt = handleToNtupleIndex_.find(genIdx);
+            if (mapIt == handleToNtupleIndex_.end())
+                continue;
+
+            const double chi2 = recoGenMuonChi2(muon, gen);
+            if (!std::isfinite(chi2) || chi2 >= bestChi2Value)
+                continue;
+
+            bestChi2Value = chi2;
+            bestIdx = mapIt->second;
+        }
+
+        if (bestIdx >= 0)
+            bestChi2 = static_cast<float>(bestChi2Value);
+
+        return bestIdx;
+    };
+
+    for (auto iMuonP = thePATMuonHandle_->begin();
+         iMuonP != thePATMuonHandle_->end(); ++iMuonP) {
+        ++nMu;
+        muIsPatLooseMuon->push_back(iMuonP->isLooseMuon());
+        muIsPatTightMuon->push_back(iMuonP->isTightMuon(thePrimaryV));
+        muIsPatSoftMuon->push_back(iMuonP->isSoftMuon(thePrimaryV));
+        muIsPatMediumMuon->push_back(iMuonP->isMediumMuon());
+
+        muPx->push_back(iMuonP->px());
+        muPy->push_back(iMuonP->py());
+        muPz->push_back(iMuonP->pz());
+        muCharge->push_back(iMuonP->charge());
+
+        // Muon momentum errors
+        if (storeMuonMomentumErrors_) {
+            float pxErr = -9, pyErr = -9, pzErr = -9, ptErr = -9;
+            reco::TrackRef muTrack = iMuonP->track();
+
+            if (muTrack.isNull() || !muTrack.isAvailable()) {
+                // Try bestTrack() as fallback
+                try {
+                    auto bestTrk = iMuonP->muonBestTrack();
+                    if (bestTrk.isAvailable()) {
+                        auto cov = bestTrk->covariance();
+                        pxErr = std::sqrt(std::max(cov(0,0), 0.0));
+                        pyErr = std::sqrt(std::max(cov(1,1), 0.0));
+                        pzErr = std::sqrt(std::max(cov(2,2), 0.0));
+
+                        float px = bestTrk->momentum().x();
+                        float py = bestTrk->momentum().y();
+                        float pt = std::sqrt(px*px + py*py);
+                        if (pt > 0) {
+                            float dpt_dpx = px/pt;
+                            float dpt_dpy = py/pt;
+                            ptErr = std::sqrt(dpt_dpx*dpt_dpx*cov(0,0) +
+                                              dpt_dpy*dpt_dpy*cov(1,1) +
+                                              2.0*dpt_dpx*dpt_dpy*cov(0,1));
+                        }
+                    }
+                } catch (...) { /* keep -9 */ }
+            } else {
+                auto cov = muTrack->covariance();
+                pxErr = std::sqrt(std::max(cov(0,0), 0.0));
+                pyErr = std::sqrt(std::max(cov(1,1), 0.0));
+                pzErr = std::sqrt(std::max(cov(2,2), 0.0));
+
+                float px = muTrack->momentum().x();
+                float py = muTrack->momentum().y();
+                float pt = std::sqrt(px*px + py*py);
+                if (pt > 0) {
+                    float dpt_dpx = px/pt;
+                    float dpt_dpy = py/pt;
+                    ptErr = std::sqrt(dpt_dpx*dpt_dpx*cov(0,0) +
+                                      dpt_dpy*dpt_dpy*cov(1,1) +
+                                      2.0*dpt_dpx*dpt_dpy*cov(0,1));
                 }
-                // [TODO] Store the difference between fitted mass with std. mass.
-                // [TODO] Store pT eta phi ctau and other kinematic parameters. "As much as possible"
-                // [HINT] Only Jpsi ctau required. 
-                // [HINT] DR may be useful in BKG suppression. (To deal with pile up. Do it later.)
-                else{
-                    // Store "error code" -9 for the secondary particles (quarkonia).
-                    Jpsi_2_mass->push_back(-9);
-                    Jpsi_2_massErr->push_back(-9);
-                    Jpsi_2_massDiff->push_back(-9);
-                    Jpsi_2_ctau->push_back(-9);
-                    Jpsi_2_ctauErr->push_back(-9);
-                    Jpsi_2_Chi2->push_back(-9);
-                    Jpsi_2_ndof->push_back(-9);
-                    Jpsi_2_VtxProb->push_back(-9);
-                    Jpsi_2_px->push_back(-9);
-                    Jpsi_2_py->push_back(-9);
-                    Jpsi_2_pz->push_back(-9);
-                    Jpsi_2_phi->push_back(-9);
-                    Jpsi_2_eta->push_back(-9);
-                    Jpsi_2_pt->push_back(-9);
+            }
+            muPxErr->push_back(pxErr);
+            muPyErr->push_back(pyErr);
+            muPzErr->push_back(pzErr);
+            muPtErr->push_back(ptErr);
+        } else {
+            muPxErr->push_back(-9);
+            muPyErr->push_back(-9);
+            muPzErr->push_back(-9);
+            muPtErr->push_back(-9);
+        }
+
+        const MuonTrackMatchResult packedMatch = matchMuonToTrack(
+            *iMuonP, theTrackHandle_, recVtxs, thePrimaryV);
+        if (packedMatch.matched && packedMatch.trackPoolIdx >= 0 &&
+            packedMatch.trackPoolIdx < static_cast<int>(nonMuonTrack_.size())) {
+            nonMuonTrack_.erase(nonMuonTrack_.begin() + packedMatch.trackPoolIdx);
+        }
+
+        float muDzAssocPVValue = -9.f;
+        float muDxyAssocPVValue = -9.f;
+        const reco::Track* matchedMuonTrack = bestMuonTrackForGenMatch(*iMuonP);
+        if (matchedMuonTrack != nullptr && recVtxs.isValid() &&
+            packedMatch.vertexId >= 0 &&
+            packedMatch.vertexId < static_cast<int>(recVtxs->size())) {
+            const auto& assocPV = (*recVtxs)[packedMatch.vertexId];
+            muDzAssocPVValue = matchedMuonTrack->dz(assocPV.position());
+            muDxyAssocPVValue = matchedMuonTrack->dxy(assocPV.position());
+        }
+
+        muFromPV->push_back(packedMatch.fromPV);
+        muPVAssocQuality->push_back(packedMatch.pvAssocQuality);
+        muVertexId->push_back(packedMatch.vertexId);
+        muDzAssocPV->push_back(muDzAssocPVValue);
+        muDxyAssocPV->push_back(muDxyAssocPVValue);
+        muFromPVAssocPV->push_back(packedMatch.fromPV);
+        muPdgId->push_back(packedMatch.pdgId);
+        muPackedMatchIdx->push_back(packedMatch.packedHandleIdx);
+        muPackedMatchMethod->push_back(packedMatch.methodUsed);
+        muPackedMatchVectorRelP->push_back(packedMatch.vectorRelP);
+        muPackedMatchChi2->push_back(packedMatch.chi2);
+        muPackedMatchDzPV->push_back(packedMatch.dzSelectedPV);
+        muPackedMatchDzAssocPV->push_back(packedMatch.dzAssocPV);
+
+        if (muTrkMatchDebug_) {
+            muMatch_nCandidates->push_back(packedMatch.nCandidates);
+            muMatch_bestRelDiff->push_back(packedMatch.vectorRelP);
+            muMatch_bestDz->push_back(
+                packedMatch.methodUsed == static_cast<int>(MuTrkMatchMethod::DzAssoc) ?
+                    packedMatch.dzAssocPV : packedMatch.dzSelectedPV);
+            muMatch_methodUsed->push_back(packedMatch.methodUsed);
+        }
+
+        int genMatchIdx = -1;
+        int genMatchSource = 0;
+        float genMatchChi2 = -1.f;
+        if (haveGenParticles) {
+            genMatchIdx = matchMuonFromPatRefs(*iMuonP, genMatchChi2);
+            if (genMatchIdx >= 0) {
+                genMatchSource = 1;
+            } else {
+                genMatchIdx = matchMuonByChi2(*iMuonP, genMatchChi2);
+                if (genMatchIdx >= 0)
+                    genMatchSource = 2;
+            }
+        }
+
+        muGenMatchIdx->push_back(genMatchIdx);
+        muGenMatchSource->push_back(genMatchSource);
+        muGenMatchChi2->push_back(genMatchChi2);
+
+        // Trigger matching
+        bool isJpsiTrigMatch = false;
+        bool isJpsiFilterMatch = false;
+        for (unsigned int JpsiTrig = 0; JpsiTrig < TriggersForJpsi_.size(); JpsiTrig++) {
+            if (JpsiMatchTrig[JpsiTrig] != 0) isJpsiTrigMatch = true;
+        }
+        muIsJpsiTrigMatch->push_back(isJpsiTrigMatch);
+
+        for (unsigned int JpsiFilter = 0; JpsiFilter < FiltersForJpsi_.size(); JpsiFilter++) {
+            if (isJpsiTrigMatch && hltresults.isValid()) {
+                for (auto it = iMuonP->triggerObjectMatches().begin();
+                     it != iMuonP->triggerObjectMatches().end(); ++it) {
+                    pat::TriggerObjectStandAlone tempObj(*it);
+                    tempObj.unpackFilterLabels(iEvent, *hltresults);
+                    if (tempObj.hasFilterLabel(FiltersForJpsi_[JpsiFilter])) {
+                        isJpsiFilterMatch = true;
+                    }
                 }
-                if(isValidUps){
-                    getDynamics(Ups_Fit_noMC, tmp_pt, tmp_eta, tmp_phi);
-                    Ups_mass->push_back(    Ups_Fit_noMC->currentState().mass());
-                    Ups_massDiff->push_back(Ups_Fit_noMC->currentState().mass() - myUpsMass);
-                    Ups_massErr->push_back( tmp_Ups_massErr);
-                    Ups_Chi2->push_back(double(Ups_Vtx_noMC->chiSquared()));
-                    Ups_ndof->push_back(double(Ups_Vtx_noMC->degreesOfFreedom()));
-                    Ups_VtxProb->push_back(ChiSquaredProbability((double)(Ups_Vtx_noMC->chiSquared()), 
-                                                                 (double)(Ups_Vtx_noMC->degreesOfFreedom())));
-                    Ups_px->push_back(Ups_Fit_noMC->currentState().kinematicParameters().momentum().x());
-                    Ups_py->push_back(Ups_Fit_noMC->currentState().kinematicParameters().momentum().y());
-                    Ups_pz->push_back(Ups_Fit_noMC->currentState().kinematicParameters().momentum().z());
-                    Ups_phi->push_back(tmp_pt);
-                    Ups_eta->push_back(tmp_eta);
-                    Ups_pt->push_back(tmp_pt);
+            }
+        }
+        muIsJpsiFilterMatch->push_back(isJpsiFilterMatch);
+
+        // Upsilon trigger matching
+        bool isUpsTrigMatch = false;
+        bool isUpsFilterMatch = false;
+        for (unsigned int UpsTrig = 0; UpsTrig < TriggersForUpsilon_.size(); UpsTrig++) {
+            if (UpsilonMatchTrig[UpsTrig] != 0) isUpsTrigMatch = true;
+        }
+        muIsUpsTrigMatch->push_back(isUpsTrigMatch);
+
+        for (unsigned int UpsFilter = 0; UpsFilter < FiltersForUpsilon_.size(); UpsFilter++) {
+            if (isUpsTrigMatch && hltresults.isValid()) {
+                for (auto it = iMuonP->triggerObjectMatches().begin();
+                     it != iMuonP->triggerObjectMatches().end(); ++it) {
+                    pat::TriggerObjectStandAlone tempObj(*it);
+                    tempObj.unpackFilterLabels(iEvent, *hltresults);
+                    if (tempObj.hasFilterLabel(FiltersForUpsilon_[UpsFilter])) {
+                        isUpsFilterMatch = true;
+                    }
                 }
-                else{
-                    // Store "error code" -9 for the secondary particles (quarkonia).
-                    Ups_mass->push_back(-9);
-                    Ups_massErr->push_back(-9);
-                    Ups_massDiff->push_back(-9);
-                    Ups_Chi2->push_back(-9);
-                    Ups_ndof->push_back(-9);
-                    Ups_VtxProb->push_back(-9);
-                    Ups_px->push_back(-9);
-                    Ups_py->push_back(-9);
-                    Ups_pz->push_back(-9);
-                    Ups_phi->push_back(-9);
-                    Ups_eta->push_back(-9);
-                    Ups_pt->push_back(-9);
+            }
+        }
+        muIsUpsFilterMatch->push_back(isUpsFilterMatch);
+
+        munMatchedSeg->push_back(-1);
+    }
+}
+
+/*****************************************************************************
+ * Step 5: Pair muons into onia candidates
+ *****************************************************************************/
+void MultiLepPAT::pairMuons(const edm::Handle<edm::View<pat::Muon>>& muonHandle,
+                             const MagneticField& bField)
+{
+    KinematicParticleFactoryFromTransientTrack muPairFactory;
+    ParticleMass muMass = myMuMass;
+    float muMassSigma = myMuMassErr;
+    float chi2 = 0., ndof = 0.;
+
+    std::vector<RefCountedKinematicParticle> transMuonPair;
+    std::vector<uint> transMuPairId;
+
+    muPairCand_Onia1_.clear();
+    muPairCand_Onia2_.clear();
+    muQuad_Onia_.clear();
+
+    // Determine mass windows based on analysis mode
+    double onia1MassMin = JpsiMassMin_, onia1MassMax = JpsiMassMax_;
+    double onia2MassMin = JpsiMassMin_, onia2MassMax = JpsiMassMax_;
+    
+    if (analysisChannel_ == AnalysisChannel::JpsiUpsPhi) {
+        onia2MassMin = UpsMassMin_;
+        onia2MassMax = UpsMassMax_;
+    } else if (analysisChannel_ == AnalysisChannel::JpsiJpsiUps) {
+        onia2MassMin = UpsMassMin_;
+        onia2MassMax = UpsMassMax_;
+    }
+
+    for (auto iMuon1 = muonHandle->begin(); iMuon1 != muonHandle->end(); ++iMuon1) {
+        TrackRef muTrack1 = iMuon1->track();
+        if (muTrack1.isNull()) continue;
+        // Use StringCutObjectSelector for muon cuts
+        if (!muonSelector_(*iMuon1)) continue;
+
+        TransientTrack transTrk1(muTrack1, &bField);
+        transMuonPair.push_back(muPairFactory.particle(transTrk1, muMass, chi2, ndof, muMassSigma));
+        transMuPairId.push_back(iMuon1 - muonHandle->begin());
+        
+        for (auto iMuon2 = iMuon1 + 1; iMuon2 != muonHandle->end(); ++iMuon2) {
+            TrackRef muTrack2 = iMuon2->track();
+            if (muTrack2.isNull()) continue;
+            if (!muonSelector_(*iMuon2)) continue;
+
+            // Charge requirement
+            if ((iMuon1->charge() + iMuon2->charge()) != 0) continue;
+
+            double muPairMass = (iMuon1->p4() + iMuon2->p4()).mass();
+            
+            // Check against both J/psi and Upsilon windows
+            bool isOnia1 = (onia1MassMin < muPairMass && muPairMass < onia1MassMax);
+            bool isOnia2 = (onia2MassMin < muPairMass && muPairMass < onia2MassMax);
+            
+            if (!isOnia1 && !isOnia2) continue;
+
+            // Per-resonance pair pT and eta pre-cuts
+            auto pairP4 = iMuon1->p4() + iMuon2->p4();
+            if (isOnia1) {
+                if (pairP4.Pt() < jpsiCandPtMin_ || std::abs(pairP4.Eta()) > jpsiCandEtaMax_)
+                    isOnia1 = false;
+            }
+            if (isOnia2) {
+                double ptCut  = (analysisChannel_ == AnalysisChannel::JpsiJpsiPhi) ? jpsiCandPtMin_  : upsCandPtMin_;
+                double etaCut = (analysisChannel_ == AnalysisChannel::JpsiJpsiPhi) ? jpsiCandEtaMax_ : upsCandEtaMax_;
+                if (pairP4.Pt() < ptCut || std::abs(pairP4.Eta()) > etaCut)
+                    isOnia2 = false;
+            }
+            if (!isOnia1 && !isOnia2) continue;
+
+            TransientTrack transTrk2(muTrack2, &bField);
+            transMuonPair.push_back(muPairFactory.particle(transTrk2, muMass, chi2, ndof, muMassSigma));
+            transMuPairId.push_back(iMuon2 - muonHandle->begin());
+
+            if (!particlesToVtx(transMuonPair, OniaDecayVtxProbCut_)) {
+                transMuonPair.pop_back();
+                transMuPairId.pop_back();
+                continue;
+            }
+
+            RefCountedKinematicTree muVtxFitTree;
+            particlesToVtx(muVtxFitTree, transMuonPair, "muon pair", OniaDecayVtxProbCut_);
+
+            // Store in appropriate container based on mass window and analysis mode
+            if (analysisChannel_ == AnalysisChannel::JpsiJpsiPhi) {
+                // JpsiJpsiPhi: Onia1==Onia2==J/psi, store all in Onia1_ (upper-triangle quartets)
+                muPairCand_Onia1_.push_back(std::make_pair(transMuonPair, transMuPairId));
+            } else {
+                // JpsiJpsiUps or JpsiUpsPhi: separate Jpsi→Onia1, Ups→Onia2
+                if (isOnia1) {
+                    muPairCand_Onia1_.push_back(std::make_pair(transMuonPair, transMuPairId));
+                }
+                if (isOnia2) {
+                    muPairCand_Onia2_.push_back(std::make_pair(transMuonPair, transMuPairId));
+                }
+            }
+
+            transMuonPair.pop_back();
+            transMuPairId.pop_back();
+        }
+        transMuonPair.pop_back();
+        transMuPairId.pop_back();
+    }
+
+    // Build muon quartets from non-overlapping pairs
+    RefCountedKinematicTree vtxFitTree_1, vtxFitTree_2;
+    RefCountedKinematicParticle fit1, fit2;
+    RefCountedKinematicVertex vtx1, vtx2;
+    double massErr1, massErr2;
+    std::vector<RefCountedKinematicParticle> interOnia;
+
+    if (analysisChannel_ == AnalysisChannel::JpsiUpsPhi) {
+        // JpsiUpsPhi: cross-product Onia1(J/psi) × Onia2(Upsilon)
+        for (auto& pair1 : muPairCand_Onia1_) {
+            for (auto& pair2 : muPairCand_Onia2_) {
+                if (isOverlapPair(pair1, pair2)) continue;
+
+                bool valid1 = particlesToVtx(vtxFitTree_1, pair1.first, "Onia_1", OniaDecayVtxProbCut_);
+                bool valid2 = particlesToVtx(vtxFitTree_2, pair2.first, "Onia_2", OniaDecayVtxProbCut_);
+
+                if (valid1 && valid2) {
+                    extractFitRes(vtxFitTree_1, fit1, vtx1, massErr1);
+                    extractFitRes(vtxFitTree_2, fit2, vtx2, massErr2);
+                    if (massErr1 >= 0.0 && massErr2 >= 0.0) {
+                        interOnia.push_back(fit1);
+                        interOnia.push_back(fit2);
+                        if (particlesToVtx(interOnia, OniaDecayVtxProbCut_)) {
+                            muQuad_Onia_.push_back(std::make_pair(pair1, pair2));
+                        }
+                        interOnia.clear();
+                    }
+                }
+            }
+        }
+    } else {
+        // JpsiJpsiPhi or JpsiJpsiUps: upper-triangle of Onia1_ for same-species
+        for (auto pair1 = muPairCand_Onia1_.begin(); pair1 != muPairCand_Onia1_.end(); ++pair1) {
+            for (auto pair2 = pair1 + 1; pair2 != muPairCand_Onia1_.end(); ++pair2) {
+                if (isOverlapPair(*pair1, *pair2)) continue;
+
+                bool valid1 = particlesToVtx(vtxFitTree_1, pair1->first, "Onia_1", OniaDecayVtxProbCut_);
+                bool valid2 = particlesToVtx(vtxFitTree_2, pair2->first, "Onia_2", OniaDecayVtxProbCut_);
+
+                if (valid1 && valid2) {
+                    extractFitRes(vtxFitTree_1, fit1, vtx1, massErr1);
+                    extractFitRes(vtxFitTree_2, fit2, vtx2, massErr2);
+                    if (massErr1 >= 0.0 && massErr2 >= 0.0) {
+                        interOnia.push_back(fit1);
+                        interOnia.push_back(fit2);
+                        if (particlesToVtx(interOnia, OniaDecayVtxProbCut_)) {
+                            muQuad_Onia_.push_back(std::make_pair(*pair1, *pair2));
+                        }
+                        interOnia.clear();
+                    }
                 }
             }
         }
     }
-    // Currently: Event
-	if (Pri_VtxProb->size() > 0 || doMC)
-	{
-		X_One_Tree_->Fill();
-	}
+}
 
-	if (Debug_)
-	{
-	}
-    // Reset the vectors [Annotated by Eric Wang, 20240704]
-	if (doMC)
-	{
-		MC_X_px->clear();
-		MC_X_py->clear();
-		MC_X_pz->clear();
-		MC_X_mass->clear();
-		MC_X_chg->clear();
-		MC_Dau_JpsipdgId->clear();
-		MC_Dau_Jpsipx->clear();
-		MC_Dau_Jpsipy->clear();
-		MC_Dau_Jpsipz->clear();
-		MC_Dau_Jpsimass->clear();
-		MC_Dau_psi2spdgId->clear();
-		MC_Dau_psi2spx->clear();
-		MC_Dau_psi2spy->clear();
-		MC_Dau_psi2spz->clear();
-		MC_Dau_psi2smass->clear();
-		MC_Granddau_mu1pdgId->clear();
-		MC_Granddau_mu1px->clear();
-		MC_Granddau_mu1py->clear();
-		MC_Granddau_mu1pz->clear();
-		MC_Granddau_mu2pdgId->clear();
-		MC_Granddau_mu2px->clear();
-		MC_Granddau_mu2py->clear();
-		MC_Granddau_mu2pz->clear();
-		MC_Granddau_JpsipdgId->clear();
-		MC_Granddau_Jpsipx->clear();
-		MC_Granddau_Jpsipy->clear();
-		MC_Granddau_Jpsipz->clear();
-		MC_Granddau_Jpsimass->clear();
-		MC_Granddau_pi1pdgId->clear();
-		MC_Granddau_pi1px->clear();
-		MC_Granddau_pi1py->clear();
-		MC_Granddau_pi1pz->clear();
-		MC_Granddau_pi2pdgId->clear();
-		MC_Granddau_pi2px->clear();
-		MC_Granddau_pi2py->clear();
-		MC_Granddau_pi2pz->clear();
-		MC_Grandgranddau_mu3pdgId->clear();
-		MC_Grandgranddau_mu3px->clear();
-		MC_Grandgranddau_mu3py->clear();
-		MC_Grandgranddau_mu3pz->clear();
-		MC_Grandgranddau_mu4pdgId->clear();
-		MC_Grandgranddau_mu4px->clear();
-		MC_Grandgranddau_mu4py->clear();
-		MC_Grandgranddau_mu4pz->clear();
+/*****************************************************************************
+ * Step 6: Pair tracks into meson candidates
+ *****************************************************************************/
+void MultiLepPAT::pairTracks(
+    const std::vector<edm::View<pat::PackedCandidate>::const_iterator>& tracks,
+    const MagneticField& bField)
+{
+    KPairCand_Meson_.clear();
+    KinematicParticleFactoryFromTransientTrack PhiFactory;
+    ParticleMass KMass = myKMass;
+    float KMassSigma = myKMassErr;
+    float chi2 = 0., ndof = 0.;
 
-		Match_mu1px->clear();
-		Match_mu1py->clear();
-		Match_mu1pz->clear();
-		Match_mu2px->clear();
-		Match_mu2py->clear();
-		Match_mu2pz->clear();
-		Match_mu3px->clear();
-		Match_mu3py->clear();
-		Match_mu3pz->clear();
-		Match_mu4px->clear();
-		Match_mu4py->clear();
-		Match_mu4pz->clear();
+    std::vector<RefCountedKinematicParticle> transTrackPair;
+    std::vector<uint> transTrackPairId;
 
-		Match_pi1px->clear();
-		Match_pi1py->clear();
-		Match_pi1pz->clear();
-		Match_pi2px->clear();
-		Match_pi2py->clear();
-		Match_pi2pz->clear();
-	}
+    for (auto iTrack1ID = tracks.begin(); iTrack1ID != tracks.end(); ++iTrack1ID) {
+        auto iTrack1 = *iTrack1ID;
+        if (!iTrack1->hasTrackDetails() || iTrack1->charge() == 0) continue;
+        if (static_cast<int>(iTrack1->fromPV()) < minTrackFromPV_) continue;
+        // Use StringCutObjectSelector for track cuts
+        if (!trackSelector_(*iTrack1)) continue;
+        if (iTrack1->bestTrack()->normalizedChi2() > 8 ||
+            !iTrack1->bestTrack()->quality(reco::Track::highPurity)) continue;
 
-	trigRes->clear();
-	trigNames->clear();
-	L1TT->clear();
-	MatchTriggerNames->clear();
-	muIsJpsiTrigMatch->clear();
-	muIsUpsTrigMatch->clear();
-	runNum = 0;
-	evtNum = 0;
-	lumiNum = 0;
-	nGoodPrimVtx = 0;
-	priVtxX = 0;
-	priVtxY = 0;
-	priVtxZ = 0;
-	priVtxXE = 0;
-	priVtxYE = 0;
-	priVtxZE = 0;
-	priVtxChiNorm = 0;
-	priVtxChi = 0;
-	priVtxCL = 0;
-	// mybxlumicorr = 0;
-	// myrawbxlumi = 0;
-	PriVtxXCorrX->clear();
-	PriVtxXCorrY->clear();
-	PriVtxXCorrZ->clear();
-	PriVtxXCorrEX->clear();
-	PriVtxXCorrEY->clear();
-	PriVtxXCorrEZ->clear();
-	PriVtxXCorrC2->clear();
-	PriVtxXCorrCL->clear();
+        TransientTrack trackTT1(*(iTrack1->bestTrack()), &bField);
+        transTrackPair.push_back(PhiFactory.particle(trackTT1, KMass, chi2, ndof, KMassSigma));
+        transTrackPairId.push_back(iTrack1ID - tracks.begin());
 
-	nMu = 0;
-	muPx->clear();
-	muPy->clear();
-	muPz->clear();
-	muD0->clear();
-	muD0E->clear();
-	muDz->clear();
-	muChi2->clear();
-	muGlChi2->clear();
-	mufHits->clear();
-	muFirstBarrel->clear();
-	muFirstEndCap->clear();
-	muDzVtx->clear();
-	muDxyVtx->clear();
-	muNDF->clear();
-	muGlNDF->clear();
-	muPhits->clear();
-	muShits->clear();
-	muGlMuHits->clear();
-	muType->clear();
-	muQual->clear();
-	muTrack->clear();
-	muCharge->clear();
-	muIsoratio->clear();
-	muIsGoodLooseMuon->clear();
-	muIsGoodLooseMuonNew->clear();
-	muIsGoodSoftMuonNewIlse->clear();
-	muIsGoodSoftMuonNewIlseMod->clear();
-	muIsGoodTightMuon->clear();
-	munMatchedSeg->clear();
-	muMVAMuonID->clear();
-	musegmentCompatibility->clear();
+        for (auto iTrack2ID = iTrack1ID + 1; iTrack2ID != tracks.end(); ++iTrack2ID) {
+            auto iTrack2 = *iTrack2ID;
+            if (!iTrack2->hasTrackDetails() || iTrack2->charge() == 0) continue;
+            if (static_cast<int>(iTrack2->fromPV()) < minTrackFromPV_) continue;
+            if (!trackSelector_(*iTrack2)) continue;
+            if (iTrack2->bestTrack()->normalizedChi2() > 8 ||
+                !iTrack2->bestTrack()->quality(reco::Track::highPurity)) continue;
+            if ((iTrack1->charge() + iTrack2->charge()) != 0) continue;
 
-	mupulldXdZ_pos_noArb->clear();
-	mupulldYdZ_pos_noArb->clear();
-	mupulldXdZ_pos_ArbDef->clear();
-	mupulldYdZ_pos_ArbDef->clear();
-	mupulldXdZ_pos_ArbST->clear();
-	mupulldYdZ_pos_ArbST->clear();
-	mupulldXdZ_pos_noArb_any->clear();
-	mupulldYdZ_pos_noArb_any->clear();
+            TLorentzVector P4_Track1, P4_Track2, P4_Meson;
+            P4_Track1.SetPtEtaPhiM(iTrack1->pt(), iTrack1->eta(), iTrack1->phi(), myKMass);
+            P4_Track2.SetPtEtaPhiM(iTrack2->pt(), iTrack2->eta(), iTrack2->phi(), myKMass);
+            P4_Meson = P4_Track1 + P4_Track2;
 
-	muIsPatLooseMuon->clear();
-	muIsPatTightMuon->clear();
-	muIsPatSoftMuon->clear();
-	muIsPatMediumMuon->clear();
-	muUpsVrtxMatch->clear();
-	muL3TriggerMatch->clear();
+            if (P4_Track1.DeltaR(P4_Meson) > trackDRMax_) continue;
+            if (P4_Track2.DeltaR(P4_Meson) > trackDRMax_) continue;
 
-    Pri_mass->clear();
-    Pri_massErr->clear();
-    Pri_ctau->clear();
-    Pri_ctauErr->clear();
-    Pri_Chi2->clear();
-    Pri_ndof->clear();
-    Pri_VtxProb->clear();
-    Pri_px->clear();
-    Pri_py->clear();
-    Pri_pz->clear();
-    Pri_phi->clear();
-    Pri_eta->clear();
-    Pri_pt->clear();
+            bool inMassWindow = (PhiMassMin_ < P4_Meson.M() && P4_Meson.M() < PhiMassMax_);
+            if (!inMassWindow) continue;
 
-    Jpsi_1_mass->clear();
-    Jpsi_1_massErr->clear();
-    Jpsi_1_massDiff->clear();
-    Jpsi_1_ctau->clear();
-    Jpsi_1_ctauErr->clear();
-    Jpsi_1_Chi2->clear();
-    Jpsi_1_ndof->clear();
-    Jpsi_1_VtxProb->clear();
-    Jpsi_1_px->clear();
-    Jpsi_1_py->clear();
-    Jpsi_1_pz->clear();
-    Jpsi_1_phi->clear();
-    Jpsi_1_eta->clear();
-    Jpsi_1_pt->clear();
-    Jpsi_1_mu_1_Idx->clear();
-    Jpsi_1_mu_2_Idx->clear();
+            // Per-resonance Phi pair pT/eta pre-cuts
+            if (P4_Meson.Pt() < phiCandPtMin_ || std::abs(P4_Meson.Eta()) > phiCandEtaMax_) continue;
 
-    Jpsi_2_mass->clear();
-    Jpsi_2_massErr->clear();
-    Jpsi_2_massDiff->clear();
-    Jpsi_2_ctau->clear();
-    Jpsi_2_ctauErr->clear();
-    Jpsi_2_Chi2->clear();
-    Jpsi_2_ndof->clear();
-    Jpsi_2_VtxProb->clear();
-    Jpsi_2_px->clear();
-    Jpsi_2_py->clear();
-    Jpsi_2_pz->clear();
-    Jpsi_2_phi->clear();
-    Jpsi_2_eta->clear();
-    Jpsi_2_pt->clear();
-    Jpsi_2_mu_1_Idx->clear();
-    Jpsi_2_mu_2_Idx->clear();
+            TransientTrack trackTT2(*(iTrack2->bestTrack()), &bField);
+            transTrackPair.push_back(PhiFactory.particle(trackTT2, KMass, chi2, ndof, KMassSigma));
+            transTrackPairId.push_back(iTrack2ID - tracks.begin());
 
-    Ups_mass->clear();
-    Ups_massErr->clear();
-    Ups_massDiff->clear();
-    Ups_Chi2->clear();
-    Ups_ndof->clear();
-    Ups_VtxProb->clear();
-    Ups_px->clear();
-    Ups_py->clear();
-    Ups_pz->clear();
-    Ups_phi->clear();
-    Ups_eta->clear();
-    Ups_pt->clear();
-    Ups_mu_1_Idx->clear();
-    Ups_mu_2_Idx->clear();
-} // analyze
-// 
+            if (particlesToVtx(transTrackPair, OniaDecayVtxProbCut_)) {
+                KPairCand_Meson_.push_back(std::make_pair(transTrackPair, transTrackPairId));
+            }
+            transTrackPair.pop_back();
+            transTrackPairId.pop_back();
+        }
+        transTrackPair.pop_back();
+        transTrackPairId.pop_back();
+    }
+}
 
-/******************************************************************************
- * [Name of function]  
- *      tracksToMuonPair
- * [Description]  
- *      Construct muons from tracks.
- *      Assuming muon mass and mass error as PDG 2023 values.
- *      Adds reconstructed muons to the arg_MuonResults.
- * [Parameters]
- *      vector<RefCountedKinematicParticle>&        arg_MuonResults
- *          - The vector to which reconstructed muons are added.
- *      KinematicParticleFactoryFromTransientTrack& arg_MuFactory
- *          - The class used to reconstruct muons.
- *      const MagneticField&                        arg_bField,
- *          - Magnetic field used in reconstruction.
- *      const TrackRef&                             arg_Trk1, arg_Trk2  
- *          - Tracks identified as muons.      
- * [Return value]
- *      (void)
- * [Note]
- *          
-******************************************************************************/
+/*****************************************************************************
+ * Step 7: Combine candidates and fill final branches
+ *****************************************************************************/
+void MultiLepPAT::combineCandidates(
+    const reco::Vertex& beamSpotV,
+    const edm::Handle<reco::GenParticleCollection>& genParticles)
+{
+    RefCountedKinematicTree vtxFitTree_1, vtxFitTree_2, vtxFitTree_Meson, vtxFitTree_Pri;
+    RefCountedKinematicParticle fit1, fit2, fitMeson, fitPri;
+    RefCountedKinematicVertex vtx1, vtx2, vtxMeson, vtxPri;
+    double massErr1, massErr2, massErrMeson, massErrPri;
+    std::vector<RefCountedKinematicParticle> interOnia;
 
-void MultiLepPAT::getDynamics(double  arg_mass, double  arg_px,  double  arg_py, double arg_pz,
-                              double& res_pt,   double& res_eta, double& res_phi){
+    // Determine the PDG mass for the 3rd resonance
+    double mesonPdgMass = myPhiMass;
+    if (analysisChannel_ == AnalysisChannel::JpsiJpsiUps) {
+        mesonPdgMass = myUpsMass;
+    }
+
+    reco::Vertex bsV = const_cast<reco::Vertex&>(beamSpotV);
+
+    auto packedCandFromHandleIdx = [&](int handleIdx) -> const pat::PackedCandidate* {
+        if (!theTrackHandle_.isValid() || handleIdx < 0 ||
+            handleIdx >= static_cast<int>(theTrackHandle_->size())) {
+            return nullptr;
+        }
+        return &theTrackHandle_->at(handleIdx);
+    };
+
+    auto muonPackedCand = [&](unsigned int muIdx) -> const pat::PackedCandidate* {
+        if (muIdx >= muPackedMatchIdx->size()) {
+            return nullptr;
+        }
+        return packedCandFromHandleIdx(muPackedMatchIdx->at(muIdx));
+    };
+
+    auto muonTrack = [&](unsigned int muIdx) -> const reco::Track* {
+        if (!thePATMuonHandle_.isValid() || muIdx >= thePATMuonHandle_->size()) {
+            return nullptr;
+        }
+        return bestMuonTrackForGenMatch(thePATMuonHandle_->at(muIdx));
+    };
+
+    auto trackCand = [&](unsigned int nonMuonIdx) -> const pat::PackedCandidate* {
+        if (nonMuonIdx >= nonMuonTrack_.size()) {
+            return nullptr;
+        }
+        return &(*nonMuonTrack_[nonMuonIdx]);
+    };
+
+    auto packedTrack = [&](unsigned int nonMuonIdx) -> const reco::Track* {
+        if (nonMuonIdx >= nonMuonTrack_.size()) {
+            return nullptr;
+        }
+        const auto candIt = nonMuonTrack_[nonMuonIdx];
+        if (!candIt->hasTrackDetails() || candIt->bestTrack() == nullptr) {
+            return nullptr;
+        }
+        return candIt->bestTrack();
+    };
+
+    auto priVtxProbValue = [&](const RefCountedKinematicTree& fitTree) -> float {
+        if (fitTree.get() == nullptr || !fitTree->isValid()) {
+            return -999999.f;
+        }
+        try {
+            auto priVtx = fitTree->currentDecayVertex();
+            return static_cast<float>(ChiSquaredProbability(
+                static_cast<double>(priVtx->chiSquared()),
+                static_cast<double>(priVtx->degreesOfFreedom())));
+        } catch (...) {
+            return -999999.f;
+        }
+    };
+
+    // For JpsiJpsiPhi and JpsiUpsPhi: loop over track pairs + muon quartets
+    if (analysisChannel_ == AnalysisChannel::JpsiJpsiPhi ||
+        analysisChannel_ == AnalysisChannel::JpsiUpsPhi) {
+        
+        for (auto& KPair : KPairCand_Meson_) {
+            bool validMeson = particlesToVtx(vtxFitTree_Meson, KPair.first, "Meson", OniaDecayVtxProbCut_);
+            if (!validMeson) continue;
+            extractFitRes(vtxFitTree_Meson, fitMeson, vtxMeson, massErrMeson);
+            if (massErrMeson < 0) continue;
+
+            for (auto& muQuad : muQuad_Onia_) {
+                bool valid1 = particlesToVtx(vtxFitTree_1, muQuad.first.first, "Onia_1", OniaDecayVtxProbCut_);
+                bool valid2 = particlesToVtx(vtxFitTree_2, muQuad.second.first, "Onia_2", OniaDecayVtxProbCut_);
+
+                if (!valid1 || !valid2) continue;
+                extractFitRes(vtxFitTree_1, fit1, vtx1, massErr1);
+                extractFitRes(vtxFitTree_2, fit2, vtx2, massErr2);
+                if (massErr1 < 0 || massErr2 < 0) continue;
+
+                interOnia.clear();
+                interOnia.push_back(fit1);
+                interOnia.push_back(fit2);
+                interOnia.push_back(fitMeson);
+
+                bool validPri = particlesToVtx(vtxFitTree_Pri, interOnia, "primary vertex");
+                const float priVtxProb = priVtxProbValue(vtxFitTree_Pri);
+
+                // Check FINAL fitted mass against mass windows (not just pre-fit)
+                if (checkFinalMass_) {
+                    double fittedMass1 = fit1->currentState().mass();
+                    double fittedMass2 = fit2->currentState().mass();
+                    double fittedMassMeson = fitMeson->currentState().mass();
+
+                    // Determine mass windows based on analysis mode
+                    double onia1MassMin = JpsiMassMin_, onia1MassMax = JpsiMassMax_;
+                    double onia2MassMin = JpsiMassMin_, onia2MassMax = JpsiMassMax_;
+                    if (analysisChannel_ == AnalysisChannel::JpsiUpsPhi) {
+                        onia2MassMin = UpsMassMin_;
+                        onia2MassMax = UpsMassMax_;
+                    }
+
+                    bool fittedMass1InRange = (onia1MassMin < fittedMass1 && fittedMass1 < onia1MassMax);
+                    bool fittedMass2InRange = (onia2MassMin < fittedMass2 && fittedMass2 < onia2MassMax);
+                    bool fittedMassMesonInRange = (PhiMassMin_ < fittedMassMeson && fittedMassMeson < PhiMassMax_);
+
+                    if (!fittedMass1InRange || !fittedMass2InRange || !fittedMassMesonInRange) {
+                        continue;
+                    }
+                }
+
+                std::vector<const pat::PackedCandidate*> daughterPackedCands;
+                std::vector<const reco::Track*> daughterTracks;
+                daughterPackedCands.reserve(6);
+                daughterTracks.reserve(6);
+                daughterPackedCands.push_back(muonPackedCand(muQuad.first.second[0]));
+                daughterPackedCands.push_back(muonPackedCand(muQuad.first.second[1]));
+                daughterPackedCands.push_back(muonPackedCand(muQuad.second.second[0]));
+                daughterPackedCands.push_back(muonPackedCand(muQuad.second.second[1]));
+                daughterPackedCands.push_back(trackCand(KPair.second[0]));
+                daughterPackedCands.push_back(trackCand(KPair.second[1]));
+                daughterTracks.push_back(muonTrack(muQuad.first.second[0]));
+                daughterTracks.push_back(muonTrack(muQuad.first.second[1]));
+                daughterTracks.push_back(muonTrack(muQuad.second.second[0]));
+                daughterTracks.push_back(muonTrack(muQuad.second.second[1]));
+                daughterTracks.push_back(packedTrack(KPair.second[0]));
+                daughterTracks.push_back(packedTrack(KPair.second[1]));
+
+                const PriCandidateDiagnostics priDiagnostics = evaluatePriCandidateDiagnostics(
+                    validPri, priVtxProb, daughterPackedCands, daughterTracks);
+                if (!priDiagnostics.passAny) {
+                    continue;
+                }
+
+                if (!validPri) {
+                    storeSentinelPri();
+                } else {
+                    extractFitRes(vtxFitTree_Pri, fitPri, vtxPri, massErrPri);
+
+                    // Store primary vertex
+                    storeResonanceBranches(fitPri, vtxPri, massErrPri, 0, bsV,
+                        Pri_mass, Pri_massErr, nullptr, Pri_ctau, Pri_ctauErr,
+                        Pri_Chi2, Pri_ndof, Pri_VtxProb,
+                        Pri_px, Pri_py, Pri_pz, Pri_phi, Pri_eta, Pri_pt,
+                        Pri_pxErr, Pri_pyErr, Pri_pzErr, Pri_ptErr);
+                }
+                storePriDiagnostics(priDiagnostics);
+
+                // Store Onia 1 (J/psi)
+                storeResonanceBranches(fit1, vtx1, massErr1, myJpsiMass, bsV,
+                    Jpsi_1_mass, Jpsi_1_massErr, Jpsi_1_massDiff,
+                    Jpsi_1_ctau, Jpsi_1_ctauErr,
+                    Jpsi_1_Chi2, Jpsi_1_ndof, Jpsi_1_VtxProb,
+                    Jpsi_1_px, Jpsi_1_py, Jpsi_1_pz,
+                    Jpsi_1_phi, Jpsi_1_eta, Jpsi_1_pt,
+                    Jpsi_1_pxErr, Jpsi_1_pyErr, Jpsi_1_pzErr, Jpsi_1_ptErr);
+                // Store muon indices
+                Jpsi_1_mu_1_Idx->push_back(muQuad.first.second[0]);
+                Jpsi_1_mu_2_Idx->push_back(muQuad.first.second[1]);
+                // Store Onia 2 (J/psi for JpsiJpsiPhi, Upsilon for JpsiUpsPhi)
+                double onia2PdgMass = myJpsiMass;
+                if (analysisChannel_ == AnalysisChannel::JpsiJpsiPhi) {
+                    storeResonanceBranches(fit2, vtx2, massErr2, onia2PdgMass, bsV,
+                        Jpsi_2_mass, Jpsi_2_massErr, Jpsi_2_massDiff,
+                        Jpsi_2_ctau, Jpsi_2_ctauErr,
+                        Jpsi_2_Chi2, Jpsi_2_ndof, Jpsi_2_VtxProb,
+                        Jpsi_2_px, Jpsi_2_py, Jpsi_2_pz,
+                        Jpsi_2_phi, Jpsi_2_eta, Jpsi_2_pt,
+                        Jpsi_2_pxErr, Jpsi_2_pyErr, Jpsi_2_pzErr, Jpsi_2_ptErr);
+                    Jpsi_2_mu_1_Idx->push_back(muQuad.second.second[0]);
+                    Jpsi_2_mu_2_Idx->push_back(muQuad.second.second[1]);
+                    }
+
+                // For JpsiUpsPhi: also store Upsilon info in Ups_* branches
+                if (analysisChannel_ == AnalysisChannel::JpsiUpsPhi) {
+                    onia2PdgMass = myUpsMass;
+                    storeResonanceBranches(fit2, vtx2, massErr2, myUpsMass, bsV,
+                        Ups_mass, Ups_massErr, Ups_massDiff,
+                        Ups_ctau, Ups_ctauErr,
+                        Ups_Chi2, Ups_ndof, Ups_VtxProb,
+                        Ups_px, Ups_py, Ups_pz,
+                        Ups_phi, Ups_eta, Ups_pt,
+                        Ups_pxErr, Ups_pyErr, Ups_pzErr, Ups_ptErr);
+                    Ups_mu_1_Idx->push_back(muQuad.second.second[0]);
+                    Ups_mu_2_Idx->push_back(muQuad.second.second[1]);
+                }
+
+                Phi_K_1_Idx->push_back(KPair.second[0]);
+                Phi_K_2_Idx->push_back(KPair.second[1]);
+
+                // Store meson (Phi)
+                storeResonanceBranches(fitMeson, vtxMeson, massErrMeson, mesonPdgMass, bsV,
+                    Phi_mass, Phi_massErr, Phi_massDiff,
+                    Phi_ctau, Phi_ctauErr,
+                    Phi_Chi2, Phi_ndof, Phi_VtxProb,
+                    Phi_px, Phi_py, Phi_pz,
+                    Phi_phi, Phi_eta, Phi_pt,
+                    Phi_pxErr, Phi_pyErr, Phi_pzErr, Phi_ptErr);
+
+                const auto kaon1Diagnostics = buildPhiKaonDiagnostics(
+                    *nonMuonTrack_[KPair.second[0]], thePrimaryV_, genParticles);
+                const auto kaon2Diagnostics = buildPhiKaonDiagnostics(
+                    *nonMuonTrack_[KPair.second[1]], thePrimaryV_, genParticles);
+                const auto phiVertexDiagnostics = buildPhiVertexDiagnostics(
+                    validMeson, kaon1Diagnostics, kaon2Diagnostics);
+
+                Phi_fitPass->push_back(phiVertexDiagnostics.fitPass ? 1 : 0);
+                Phi_commonAssocPVPass->push_back(phiVertexDiagnostics.commonAssocPVPass ? 1 : 0);
+                Phi_commonAssocPVIdx->push_back(phiVertexDiagnostics.commonAssocPVIdx);
+                Phi_trackPVPass->push_back(phiVertexDiagnostics.trackPVPass ? 1 : 0);
+                Phi_vertexCriteriaPass->push_back(phiVertexDiagnostics.vertexCriteriaPass ? 1 : 0);
+                Phi_maxAbsDzPV->push_back(phiVertexDiagnostics.maxAbsDzPV);
+                Phi_maxAbsDxyPV->push_back(phiVertexDiagnostics.maxAbsDxyPV);
+
+                // Store kaon kinematics
+                Phi_K_1_px->push_back(nonMuonTrack_[KPair.second[0]]->px());
+                Phi_K_1_py->push_back(nonMuonTrack_[KPair.second[0]]->py());
+                Phi_K_1_pz->push_back(nonMuonTrack_[KPair.second[0]]->pz());
+                Phi_K_1_pt->push_back(nonMuonTrack_[KPair.second[0]]->pt());
+                Phi_K_1_eta->push_back(nonMuonTrack_[KPair.second[0]]->eta());
+                Phi_K_1_phi->push_back(nonMuonTrack_[KPair.second[0]]->phi());
+                Phi_K_1_fromPV->push_back(kaon1Diagnostics.fromPV);
+                Phi_K_1_pvAssocQuality->push_back(kaon1Diagnostics.pvAssocQuality);
+                Phi_K_1_vertexId->push_back(kaon1Diagnostics.vertexId);
+                Phi_K_1_hasAssocPV->push_back(kaon1Diagnostics.hasAssocPV ? 1 : 0);
+                Phi_K_1_passDzPV->push_back(kaon1Diagnostics.passDzPV ? 1 : 0);
+                Phi_K_1_passDxyPV->push_back(kaon1Diagnostics.passDxyPV ? 1 : 0);
+                Phi_K_1_passTrackPV->push_back(kaon1Diagnostics.passTrackPV ? 1 : 0);
+                Phi_K_1_dzPV->push_back(kaon1Diagnostics.dzPV);
+                Phi_K_1_dxyPV->push_back(kaon1Diagnostics.dxyPV);
+                Phi_K_1_dzAssocPV->push_back(kaon1Diagnostics.dzAssocPV);
+                Phi_K_1_dxyAssocPV->push_back(kaon1Diagnostics.dxyAssocPV);
+                Phi_K_1_genMatchIdx->push_back(kaon1Diagnostics.genMatchIdx);
+                Phi_K_1_genMatchSource->push_back(kaon1Diagnostics.genMatchSource);
+                Phi_K_1_genMatchChi2->push_back(kaon1Diagnostics.genMatchChi2);
+
+                Phi_K_2_px->push_back(nonMuonTrack_[KPair.second[1]]->px());
+                Phi_K_2_py->push_back(nonMuonTrack_[KPair.second[1]]->py());
+                Phi_K_2_pz->push_back(nonMuonTrack_[KPair.second[1]]->pz());
+                Phi_K_2_pt->push_back(nonMuonTrack_[KPair.second[1]]->pt());
+                Phi_K_2_eta->push_back(nonMuonTrack_[KPair.second[1]]->eta());
+                Phi_K_2_phi->push_back(nonMuonTrack_[KPair.second[1]]->phi());
+                Phi_K_2_fromPV->push_back(kaon2Diagnostics.fromPV);
+                Phi_K_2_pvAssocQuality->push_back(kaon2Diagnostics.pvAssocQuality);
+                Phi_K_2_vertexId->push_back(kaon2Diagnostics.vertexId);
+                Phi_K_2_hasAssocPV->push_back(kaon2Diagnostics.hasAssocPV ? 1 : 0);
+                Phi_K_2_passDzPV->push_back(kaon2Diagnostics.passDzPV ? 1 : 0);
+                Phi_K_2_passDxyPV->push_back(kaon2Diagnostics.passDxyPV ? 1 : 0);
+                Phi_K_2_passTrackPV->push_back(kaon2Diagnostics.passTrackPV ? 1 : 0);
+                Phi_K_2_dzPV->push_back(kaon2Diagnostics.dzPV);
+                Phi_K_2_dxyPV->push_back(kaon2Diagnostics.dxyPV);
+                Phi_K_2_dzAssocPV->push_back(kaon2Diagnostics.dzAssocPV);
+                Phi_K_2_dxyAssocPV->push_back(kaon2Diagnostics.dxyAssocPV);
+                Phi_K_2_genMatchIdx->push_back(kaon2Diagnostics.genMatchIdx);
+                Phi_K_2_genMatchSource->push_back(kaon2Diagnostics.genMatchSource);
+                Phi_K_2_genMatchChi2->push_back(kaon2Diagnostics.genMatchChi2);
+            }
+        }
+    }
+    // For JpsiJpsiUps: loop over J/psi quartets + Upsilon pair (6 muons total)
+    if (analysisChannel_ == AnalysisChannel::JpsiJpsiUps) {
+        for (auto& muQuad : muQuad_Onia_) {
+            for (auto& upsPair : muPairCand_Onia2_) {
+                // Check no overlap between quartet muons and Ups pair muons
+                if (isOverlapPair(muQuad.first, upsPair) ||
+                    isOverlapPair(muQuad.second, upsPair)) continue;
+
+                bool valid1 = particlesToVtx(vtxFitTree_1, muQuad.first.first, "Jpsi_1", OniaDecayVtxProbCut_);
+                bool valid2 = particlesToVtx(vtxFitTree_2, muQuad.second.first, "Jpsi_2", OniaDecayVtxProbCut_);
+
+                RefCountedKinematicTree vtxFitTree_Ups;
+                bool validUps = particlesToVtx(vtxFitTree_Ups, upsPair.first, "Ups", OniaDecayVtxProbCut_);
+
+                if (!valid1 || !valid2 || !validUps) continue;
+
+                RefCountedKinematicParticle fitUps;
+                RefCountedKinematicVertex vtxUps;
+                double massErrUps;
+
+                extractFitRes(vtxFitTree_1, fit1, vtx1, massErr1);
+                extractFitRes(vtxFitTree_2, fit2, vtx2, massErr2);
+                extractFitRes(vtxFitTree_Ups, fitUps, vtxUps, massErrUps);
+                if (massErr1 < 0 || massErr2 < 0 || massErrUps < 0) continue;
+
+                interOnia.clear();
+                interOnia.push_back(fit1);
+                interOnia.push_back(fit2);
+                interOnia.push_back(fitUps);
+
+                bool validPri = particlesToVtx(vtxFitTree_Pri, interOnia, "primary vertex");
+                const float priVtxProb = priVtxProbValue(vtxFitTree_Pri);
+                
+                // Check FINAL fitted masses
+                if (checkFinalMass_) {
+                    double fittedMass1 = fit1->currentState().mass();
+                    double fittedMass2 = fit2->currentState().mass();
+                    double fittedMassUps = fitUps->currentState().mass();
+
+                    bool fittedMass1InRange = (JpsiMassMin_ < fittedMass1 && fittedMass1 < JpsiMassMax_);
+                    bool fittedMass2InRange = (JpsiMassMin_ < fittedMass2 && fittedMass2 < JpsiMassMax_);
+                    bool fittedMassUpsInRange = (UpsMassMin_ < fittedMassUps && fittedMassUps < UpsMassMax_);
+
+                    if (!fittedMass1InRange || !fittedMass2InRange || !fittedMassUpsInRange) {
+                        continue;
+                    }
+                }
+
+                std::vector<const pat::PackedCandidate*> daughterPackedCands;
+                std::vector<const reco::Track*> daughterTracks;
+                daughterPackedCands.reserve(6);
+                daughterTracks.reserve(6);
+                daughterPackedCands.push_back(muonPackedCand(muQuad.first.second[0]));
+                daughterPackedCands.push_back(muonPackedCand(muQuad.first.second[1]));
+                daughterPackedCands.push_back(muonPackedCand(muQuad.second.second[0]));
+                daughterPackedCands.push_back(muonPackedCand(muQuad.second.second[1]));
+                daughterPackedCands.push_back(muonPackedCand(upsPair.second[0]));
+                daughterPackedCands.push_back(muonPackedCand(upsPair.second[1]));
+                daughterTracks.push_back(muonTrack(muQuad.first.second[0]));
+                daughterTracks.push_back(muonTrack(muQuad.first.second[1]));
+                daughterTracks.push_back(muonTrack(muQuad.second.second[0]));
+                daughterTracks.push_back(muonTrack(muQuad.second.second[1]));
+                daughterTracks.push_back(muonTrack(upsPair.second[0]));
+                daughterTracks.push_back(muonTrack(upsPair.second[1]));
+
+                const PriCandidateDiagnostics priDiagnostics = evaluatePriCandidateDiagnostics(
+                    validPri, priVtxProb, daughterPackedCands, daughterTracks);
+                if (!priDiagnostics.passAny) {
+                    continue;
+                }
+
+                if (!validPri) {
+                    storeSentinelPri();
+                } else {
+                    extractFitRes(vtxFitTree_Pri, fitPri, vtxPri, massErrPri);
+
+                    // Store primary vertex
+                    storeResonanceBranches(fitPri, vtxPri, massErrPri, 0, bsV,
+                        Pri_mass, Pri_massErr, nullptr, Pri_ctau, Pri_ctauErr,
+                        Pri_Chi2, Pri_ndof, Pri_VtxProb,
+                        Pri_px, Pri_py, Pri_pz, Pri_phi, Pri_eta, Pri_pt,
+                        Pri_pxErr, Pri_pyErr, Pri_pzErr, Pri_ptErr);
+                }
+                storePriDiagnostics(priDiagnostics);
+
+                // Store J/psi 1
+                storeResonanceBranches(fit1, vtx1, massErr1, myJpsiMass, bsV,
+                    Jpsi_1_mass, Jpsi_1_massErr, Jpsi_1_massDiff,
+                    Jpsi_1_ctau, Jpsi_1_ctauErr,
+                    Jpsi_1_Chi2, Jpsi_1_ndof, Jpsi_1_VtxProb,
+                    Jpsi_1_px, Jpsi_1_py, Jpsi_1_pz,
+                    Jpsi_1_phi, Jpsi_1_eta, Jpsi_1_pt,
+                    Jpsi_1_pxErr, Jpsi_1_pyErr, Jpsi_1_pzErr, Jpsi_1_ptErr);
+
+                // Store J/psi 2
+                storeResonanceBranches(fit2, vtx2, massErr2, myJpsiMass, bsV,
+                    Jpsi_2_mass, Jpsi_2_massErr, Jpsi_2_massDiff,
+                    Jpsi_2_ctau, Jpsi_2_ctauErr,
+                    Jpsi_2_Chi2, Jpsi_2_ndof, Jpsi_2_VtxProb,
+                    Jpsi_2_px, Jpsi_2_py, Jpsi_2_pz,
+                    Jpsi_2_phi, Jpsi_2_eta, Jpsi_2_pt,
+                    Jpsi_2_pxErr, Jpsi_2_pyErr, Jpsi_2_pzErr, Jpsi_2_ptErr);
+
+                // Store Upsilon
+                storeResonanceBranches(fitUps, vtxUps, massErrUps, myUpsMass, bsV,
+                    Ups_mass, Ups_massErr, Ups_massDiff,
+                    Ups_ctau, Ups_ctauErr,
+                    Ups_Chi2, Ups_ndof, Ups_VtxProb,
+                    Ups_px, Ups_py, Ups_pz,
+                    Ups_phi, Ups_eta, Ups_pt,
+                    Ups_pxErr, Ups_pyErr, Ups_pzErr, Ups_ptErr);
+
+                // Store muon indices
+                Jpsi_1_mu_1_Idx->push_back(muQuad.first.second[0]);
+                Jpsi_1_mu_2_Idx->push_back(muQuad.first.second[1]);
+                Jpsi_2_mu_1_Idx->push_back(muQuad.second.second[0]);
+                Jpsi_2_mu_2_Idx->push_back(muQuad.second.second[1]);
+                Ups_mu_1_Idx->push_back(upsPair.second[0]);
+                Ups_mu_2_Idx->push_back(upsPair.second[1]);
+            }
+        }
+    }
+}
+
+/*****************************************************************************
+ * Helper: Store sentinel values for failed 3-body vertex fit
+ *****************************************************************************/
+void MultiLepPAT::storeSentinelPri()
+{
+    const float sentinel = -999999.0f;
+    Pri_mass->push_back(sentinel);
+    Pri_massErr->push_back(sentinel);
+    Pri_ctau->push_back(sentinel);
+    Pri_ctauErr->push_back(sentinel);
+    Pri_Chi2->push_back(sentinel);
+    Pri_ndof->push_back(sentinel);
+    Pri_VtxProb->push_back(sentinel);
+    Pri_px->push_back(sentinel);
+    Pri_py->push_back(sentinel);
+    Pri_pz->push_back(sentinel);
+    Pri_phi->push_back(sentinel);
+    Pri_eta->push_back(sentinel);
+    Pri_pt->push_back(sentinel);
+    Pri_pxErr->push_back(sentinel);
+    Pri_pyErr->push_back(sentinel);
+    Pri_pzErr->push_back(sentinel);
+    Pri_ptErr->push_back(sentinel);
+}
+
+MultiLepPAT::PriCandidateDiagnostics
+MultiLepPAT::evaluatePriCandidateDiagnostics(
+    bool priFitValid,
+    float priVtxProb,
+    const std::vector<const pat::PackedCandidate*>& daughterPackedCands,
+    const std::vector<const reco::Track*>& daughterTracks) const
+{
+    PriCandidateDiagnostics diagnostics;
+    diagnostics.fitValid = priFitValid;
+    diagnostics.fitPass = priFitValid && (PriVtxProbCut_ < 0.0 || priVtxProb >= PriVtxProbCut_);
+    diagnostics.assocPVPass = false;
+    diagnostics.trackPVPass = false;
+    diagnostics.passAny = false;
+    diagnostics.assocPVIdx = -1;
+    diagnostics.maxAbsDzPV = -1.f;
+    diagnostics.maxAbsDxyPV = -1.f;
+
+    if (priRequireCommonAssocPV_) {
+        int commonPvIdx = -1;
+        bool commonAssocPV = !daughterPackedCands.empty();
+        for (const auto* cand : daughterPackedCands) {
+            if (cand == nullptr) {
+                commonAssocPV = false;
+                break;
+            }
+            const auto vtxRef = cand->vertexRef();
+            if (!vtxRef.isNonnull() || !vtxRef.isAvailable()) {
+                commonAssocPV = false;
+                break;
+            }
+            const int currentIdx = static_cast<int>(vtxRef.key());
+            if (commonPvIdx < 0) {
+                commonPvIdx = currentIdx;
+            } else if (currentIdx != commonPvIdx) {
+                commonAssocPV = false;
+                break;
+            }
+        }
+        diagnostics.assocPVPass = commonAssocPV && commonPvIdx >= 0;
+        diagnostics.assocPVIdx = diagnostics.assocPVPass ? commonPvIdx : -1;
+    }
+
+    if (priRequireTrackPVCompatibility_) {
+        bool trackCompat = !daughterTracks.empty();
+        float maxAbsDzPV = 0.f;
+        float maxAbsDxyPV = 0.f;
+        for (const auto* track : daughterTracks) {
+            if (track == nullptr) {
+                trackCompat = false;
+                break;
+            }
+            const float absDz = std::abs(track->dz(thePrimaryV_.position()));
+            const float absDxy = std::abs(track->dxy(thePrimaryV_.position()));
+            maxAbsDzPV = std::max(maxAbsDzPV, absDz);
+            maxAbsDxyPV = std::max(maxAbsDxyPV, absDxy);
+            if (absDz > priTrackDzPVMax_ || absDxy > priTrackDxyPVMax_) {
+                trackCompat = false;
+            }
+        }
+        diagnostics.trackPVPass = trackCompat;
+        diagnostics.maxAbsDzPV = maxAbsDzPV;
+        diagnostics.maxAbsDxyPV = maxAbsDxyPV;
+    }
+
+    diagnostics.passAny = diagnostics.fitPass || diagnostics.assocPVPass || diagnostics.trackPVPass;
+    return diagnostics;
+}
+
+MultiLepPAT::PhiKaonDiagnostics
+MultiLepPAT::buildPhiKaonDiagnostics(
+    const pat::PackedCandidate& cand,
+    const reco::Vertex& primaryV,
+    const edm::Handle<reco::GenParticleCollection>& genParticles) const
+{
+    PhiKaonDiagnostics diagnostics{};
+    diagnostics.vertexId = -1;
+    diagnostics.fromPV = cand.fromPV();
+    diagnostics.pvAssocQuality = cand.pvAssociationQuality();
+    diagnostics.genMatchIdx = -1;
+    diagnostics.genMatchSource = 0;
+    diagnostics.hasAssocPV = false;
+    diagnostics.passDzPV = false;
+    diagnostics.passDxyPV = false;
+    diagnostics.passTrackPV = false;
+    diagnostics.dzPV = -9.f;
+    diagnostics.dxyPV = -9.f;
+    diagnostics.dzAssocPV = -9.f;
+    diagnostics.dxyAssocPV = -9.f;
+    diagnostics.genMatchChi2 = -1.f;
+
+    const reco::Track* track =
+        (cand.hasTrackDetails() && cand.bestTrack() != nullptr) ? cand.bestTrack() : nullptr;
+
+    if (track != nullptr) {
+        diagnostics.dzPV = track->dz(primaryV.position());
+        diagnostics.dxyPV = track->dxy(primaryV.position());
+        diagnostics.passDzPV = std::abs(diagnostics.dzPV) <= priTrackDzPVMax_;
+        diagnostics.passDxyPV = std::abs(diagnostics.dxyPV) <= priTrackDxyPVMax_;
+        diagnostics.passTrackPV = diagnostics.passDzPV && diagnostics.passDxyPV;
+    }
+
+    const auto assocVtxRef = cand.vertexRef();
+    if (assocVtxRef.isNonnull() && assocVtxRef.isAvailable()) {
+        diagnostics.hasAssocPV = true;
+        diagnostics.vertexId = static_cast<int>(assocVtxRef.key());
+        if (track != nullptr) {
+            diagnostics.dzAssocPV = track->dz(assocVtxRef->position());
+            diagnostics.dxyAssocPV = track->dxy(assocVtxRef->position());
+        }
+    }
+
+    if (!genParticles.isValid() || track == nullptr) {
+        return diagnostics;
+    }
+
+    auto chargeCompatible = [&](const reco::GenParticle& gen) {
+        return gen.charge() == 0 || gen.charge() == cand.charge();
+    };
+
+    auto matchesPhiMother = [](const reco::GenParticle& gen) {
+        return gen.numberOfMothers() > 0 && gen.mother(0) != nullptr &&
+               std::abs(gen.mother(0)->pdgId()) == 333;
+    };
+
+    auto scanGenKaons = [&](bool requirePhiMother, float& bestChi2) {
+        int bestIdx = -1;
+        double bestChi2Value = recoGenKaonMatchChi2Max_;
+        bestChi2 = -1.f;
+
+        for (size_t genIdx = 0; genIdx < genParticles->size(); ++genIdx) {
+            const auto& gen = genParticles->at(genIdx);
+            if (std::abs(gen.pdgId()) != 321 || gen.status() != 1 || !chargeCompatible(gen)) {
+                continue;
+            }
+            if (requirePhiMother && !matchesPhiMother(gen)) {
+                continue;
+            }
+
+            const auto mapIt = handleToNtupleIndex_.find(genIdx);
+            if (mapIt == handleToNtupleIndex_.end()) {
+                continue;
+            }
+
+            const double chi2 = recoPackedCandidateChi2(cand, gen, *track);
+            if (!std::isfinite(chi2) || chi2 >= bestChi2Value) {
+                continue;
+            }
+
+            bestChi2Value = chi2;
+            bestIdx = mapIt->second;
+        }
+
+        if (bestIdx >= 0) {
+            bestChi2 = static_cast<float>(bestChi2Value);
+        }
+        return bestIdx;
+    };
+
+    diagnostics.genMatchIdx = scanGenKaons(true, diagnostics.genMatchChi2);
+    if (diagnostics.genMatchIdx >= 0) {
+        diagnostics.genMatchSource = 1;
+        return diagnostics;
+    }
+
+    diagnostics.genMatchIdx = scanGenKaons(false, diagnostics.genMatchChi2);
+    if (diagnostics.genMatchIdx >= 0) {
+        diagnostics.genMatchSource = 2;
+    }
+
+    return diagnostics;
+}
+
+MultiLepPAT::PhiVertexDiagnostics
+MultiLepPAT::buildPhiVertexDiagnostics(
+    bool fitPass,
+    const PhiKaonDiagnostics& kaon1,
+    const PhiKaonDiagnostics& kaon2) const
+{
+    PhiVertexDiagnostics diagnostics{};
+    diagnostics.fitPass = fitPass;
+    diagnostics.commonAssocPVPass =
+        kaon1.hasAssocPV && kaon2.hasAssocPV && kaon1.vertexId == kaon2.vertexId;
+    diagnostics.trackPVPass = kaon1.passTrackPV && kaon2.passTrackPV;
+    diagnostics.vertexCriteriaPass =
+        diagnostics.commonAssocPVPass && diagnostics.trackPVPass;
+    diagnostics.commonAssocPVIdx =
+        diagnostics.commonAssocPVPass ? kaon1.vertexId : -1;
+    diagnostics.maxAbsDzPV = std::max(std::abs(kaon1.dzPV), std::abs(kaon2.dzPV));
+    diagnostics.maxAbsDxyPV = std::max(std::abs(kaon1.dxyPV), std::abs(kaon2.dxyPV));
+    return diagnostics;
+}
+
+void MultiLepPAT::storePriDiagnostics(const PriCandidateDiagnostics& diagnostics)
+{
+    Pri_fitValid->push_back(diagnostics.fitValid ? 1 : 0);
+    Pri_fitPass->push_back(diagnostics.fitPass ? 1 : 0);
+    Pri_assocPVPass->push_back(diagnostics.assocPVPass ? 1 : 0);
+    Pri_assocPVIdx->push_back(diagnostics.assocPVIdx);
+    Pri_trackPVPass->push_back(diagnostics.trackPVPass ? 1 : 0);
+    Pri_passAny->push_back(diagnostics.passAny ? 1 : 0);
+    Pri_maxAbsDzPV->push_back(diagnostics.maxAbsDzPV);
+    Pri_maxAbsDxyPV->push_back(diagnostics.maxAbsDxyPV);
+}
+
+/*****************************************************************************
+ * Helper: Store resonance fit results into branches
+ *****************************************************************************/
+void MultiLepPAT::storeResonanceBranches(
+    const RefCountedKinematicParticle& fitPart,
+    const RefCountedKinematicVertex& vtx,
+    double massErr, double pdgMass,
+    reco::Vertex& beamSpotV,
+    vector<float>* br_mass, vector<float>* br_massErr, vector<float>* br_massDiff,
+    vector<float>* br_ctau, vector<float>* br_ctauErr,
+    vector<float>* br_Chi2, vector<float>* br_ndof, vector<float>* br_VtxProb,
+    vector<float>* br_px, vector<float>* br_py, vector<float>* br_pz,
+    vector<float>* br_phi, vector<float>* br_eta, vector<float>* br_pt,
+    vector<float>* br_pxErr, vector<float>* br_pyErr, vector<float>* br_pzErr,
+    vector<float>* br_ptErr)
+{
+    double tmp_pt, tmp_eta, tmp_phi;
+    getDynamics(fitPart, tmp_pt, tmp_eta, tmp_phi);
+
+    double tmp_pxErr, tmp_pyErr, tmp_pzErr, tmp_ptErr;
+    getMomentumErrors(fitPart, tmp_pxErr, tmp_pyErr, tmp_pzErr, tmp_ptErr);
+
+    br_mass->push_back(fitPart->currentState().mass());
+    br_massErr->push_back(massErr);
+    if (br_massDiff) {
+        br_massDiff->push_back(fitPart->currentState().mass() - pdgMass);
+    }
+
+    RefCountedKinematicVertex vtxCopy = vtx;
+    RefCountedKinematicParticle partCopy = fitPart;
+    br_ctau->push_back(GetcTau(vtxCopy, partCopy, beamSpotV));
+    br_ctauErr->push_back(GetcTauErr(vtxCopy, partCopy, beamSpotV));
+    br_Chi2->push_back(double(vtx->chiSquared()));
+    br_ndof->push_back(double(vtx->degreesOfFreedom()));
+    br_VtxProb->push_back(ChiSquaredProbability(
+        (double)(vtx->chiSquared()), (double)(vtx->degreesOfFreedom())));
+
+    br_px->push_back(fitPart->currentState().kinematicParameters().momentum().x());
+    br_py->push_back(fitPart->currentState().kinematicParameters().momentum().y());
+    br_pz->push_back(fitPart->currentState().kinematicParameters().momentum().z());
+    br_phi->push_back(tmp_phi);
+    br_eta->push_back(tmp_eta);
+    br_pt->push_back(tmp_pt);
+
+    if (br_pxErr) br_pxErr->push_back(tmp_pxErr);
+    if (br_pyErr) br_pyErr->push_back(tmp_pyErr);
+    if (br_pzErr) br_pzErr->push_back(tmp_pzErr);
+    if (br_ptErr) br_ptErr->push_back(tmp_ptErr);
+}
+
+/*****************************************************************************
+ * Step 8: MC gen-level matching
+ *****************************************************************************/
+void MultiLepPAT::doMCGenMatching(
+    const edm::Handle<edm::View<pat::Muon>>& muonHandle,
+    const edm::Handle<edm::View<pat::PackedCandidate>>& trackHandle)
+{
+    // Basic deltaR-based matching placeholder
+    // This stores matched reco tracks to gen-level kaons
+    // (Full matching logic to be expanded as needed)
+    if (!Match_pi1px || !MC_GenPart_px) return;
+    // Matching is done post-hoc in offline analysis
+}
+
+/*****************************************************************************
+ * Step 9: Clear all event data
+ *****************************************************************************/
+void MultiLepPAT::clearEventData()
+{
+    // MC gen-level (new)
+    if (doMC) {
+        MC_GenPart_pdgId->clear(); MC_GenPart_status->clear();
+        MC_GenPart_motherPdgId->clear();
+        MC_GenPart_motherGenIdx->clear();
+        MC_GenPart_handleIndex->clear();
+        MC_GenPart_px->clear(); MC_GenPart_py->clear();
+        MC_GenPart_pz->clear(); MC_GenPart_mass->clear();
+        MC_GenPart_pt->clear(); MC_GenPart_eta->clear();
+        MC_GenPart_phi->clear();
+    }
+
+    trigRes->clear(); trigNames->clear();
+    L1TT->clear(); MatchJpsiTrigNames->clear(); MatchUpsTrigNames->clear();
+    muIsJpsiTrigMatch->clear(); muIsJpsiFilterMatch->clear();
+    muIsUpsTrigMatch->clear(); muIsUpsFilterMatch->clear();
+
+    runNum = 0; evtNum = 0; lumiNum = 0; nGoodPrimVtx = 0;
+    priVtxX = 0; priVtxY = 0; priVtxZ = 0;
+    priVtxXE = 0; priVtxYE = 0; priVtxZE = 0;
+    priVtxChiNorm = 0; priVtxChi = 0; priVtxCL = 0;
+
+    PriVtxXCorrX->clear(); PriVtxXCorrY->clear(); PriVtxXCorrZ->clear();
+    PriVtxXCorrEX->clear(); PriVtxXCorrEY->clear(); PriVtxXCorrEZ->clear();
+    PriVtxXCorrC2->clear(); PriVtxXCorrCL->clear();
+
+    // All primary vertices
+    nRecVtx = 0;
+    RecVtx_x->clear(); RecVtx_y->clear(); RecVtx_z->clear();
+    RecVtx_xErr->clear(); RecVtx_yErr->clear(); RecVtx_zErr->clear();
+    RecVtx_chi2->clear(); RecVtx_ndof->clear(); RecVtx_vtxProb->clear();
+    RecVtx_nTracks->clear();
+
+    nMu = 0;
+    muPx->clear(); muPy->clear(); muPz->clear();
+    muD0->clear(); muD0E->clear(); muDz->clear();
+    muChi2->clear(); muGlChi2->clear(); mufHits->clear();
+    muFirstBarrel->clear(); muFirstEndCap->clear();
+    muDzVtx->clear(); muDxyVtx->clear();
+    muNDF->clear(); muGlNDF->clear(); muPhits->clear();
+    muShits->clear(); muGlMuHits->clear();
+    muType->clear(); muQual->clear();
+    muTrack->clear(); muCharge->clear(); muIsoratio->clear();
+    muIsGoodLooseMuon->clear(); muIsGoodLooseMuonNew->clear();
+    muIsGoodSoftMuonNewIlse->clear(); muIsGoodSoftMuonNewIlseMod->clear();
+    muIsGlobalMuon->clear(); muIsGoodTightMuon->clear();
+    munMatchedSeg->clear();
+    muMVAMuonID->clear(); musegmentCompatibility->clear();
+    mupulldXdZ_pos_noArb->clear(); mupulldYdZ_pos_noArb->clear();
+    mupulldXdZ_pos_ArbDef->clear(); mupulldYdZ_pos_ArbDef->clear();
+    mupulldXdZ_pos_ArbST->clear(); mupulldYdZ_pos_ArbST->clear();
+    mupulldXdZ_pos_noArb_any->clear(); mupulldYdZ_pos_noArb_any->clear();
+    muIsPatLooseMuon->clear(); muIsPatTightMuon->clear();
+    muIsPatSoftMuon->clear(); muIsPatMediumMuon->clear();
+    muFromPV->clear(); muPVAssocQuality->clear();
+
+    // Muon momentum errors
+    muPxErr->clear(); muPyErr->clear(); muPzErr->clear(); muPtErr->clear();
+
+    // Muon PV association (surplus from sourceCandidatePtr)
+    muVertexId->clear(); muDzAssocPV->clear(); muDxyAssocPV->clear();
+    muFromPVAssocPV->clear(); muPdgId->clear();
+    muPackedMatchIdx->clear(); muPackedMatchMethod->clear();
+    muPackedMatchVectorRelP->clear(); muPackedMatchChi2->clear();
+    muPackedMatchDzPV->clear(); muPackedMatchDzAssocPV->clear();
+    muGenMatchIdx->clear(); muGenMatchSource->clear(); muGenMatchChi2->clear();
+
+    // Muon-track matching debug
+    if (muTrkMatchDebug_) {
+        muMatch_nCandidates->clear(); muMatch_bestRelDiff->clear();
+        muMatch_bestDz->clear(); muMatch_methodUsed->clear();
+    }
+
+    // Resonance branches
+    Pri_mass->clear(); Pri_massErr->clear();
+    Pri_ctau->clear(); Pri_ctauErr->clear();
+    Pri_Chi2->clear(); Pri_ndof->clear(); Pri_VtxProb->clear();
+    Pri_px->clear(); Pri_py->clear(); Pri_pz->clear();
+    Pri_phi->clear(); Pri_eta->clear(); Pri_pt->clear();
+    Pri_pxErr->clear(); Pri_pyErr->clear(); Pri_pzErr->clear(); Pri_ptErr->clear();
+    Pri_fitValid->clear(); Pri_fitPass->clear(); Pri_assocPVPass->clear();
+    Pri_assocPVIdx->clear(); Pri_trackPVPass->clear(); Pri_passAny->clear();
+    Pri_maxAbsDzPV->clear(); Pri_maxAbsDxyPV->clear();
+
+    Jpsi_1_mass->clear(); Jpsi_1_massErr->clear(); Jpsi_1_massDiff->clear();
+    Jpsi_1_ctau->clear(); Jpsi_1_ctauErr->clear();
+    Jpsi_1_Chi2->clear(); Jpsi_1_ndof->clear(); Jpsi_1_VtxProb->clear();
+    Jpsi_1_px->clear(); Jpsi_1_py->clear(); Jpsi_1_pz->clear();
+    Jpsi_1_phi->clear(); Jpsi_1_eta->clear(); Jpsi_1_pt->clear();
+    Jpsi_1_mu_1_Idx->clear(); Jpsi_1_mu_2_Idx->clear();
+    Jpsi_1_pxErr->clear(); Jpsi_1_pyErr->clear(); Jpsi_1_pzErr->clear(); Jpsi_1_ptErr->clear();
+
+    Jpsi_2_mass->clear(); Jpsi_2_massErr->clear(); Jpsi_2_massDiff->clear();
+    Jpsi_2_ctau->clear(); Jpsi_2_ctauErr->clear();
+    Jpsi_2_Chi2->clear(); Jpsi_2_ndof->clear(); Jpsi_2_VtxProb->clear();
+    Jpsi_2_px->clear(); Jpsi_2_py->clear(); Jpsi_2_pz->clear();
+    Jpsi_2_phi->clear(); Jpsi_2_eta->clear(); Jpsi_2_pt->clear();
+    Jpsi_2_mu_1_Idx->clear(); Jpsi_2_mu_2_Idx->clear();
+    Jpsi_2_pxErr->clear(); Jpsi_2_pyErr->clear(); Jpsi_2_pzErr->clear(); Jpsi_2_ptErr->clear();
+
+    Phi_mass->clear(); Phi_massErr->clear(); Phi_massDiff->clear();
+    Phi_ctau->clear(); Phi_ctauErr->clear();
+    Phi_Chi2->clear(); Phi_ndof->clear(); Phi_VtxProb->clear();
+    Phi_px->clear(); Phi_py->clear(); Phi_pz->clear();
+    Phi_phi->clear(); Phi_eta->clear(); Phi_pt->clear();
+    Phi_pxErr->clear(); Phi_pyErr->clear(); Phi_pzErr->clear(); Phi_ptErr->clear();
+    Phi_fitPass->clear(); Phi_commonAssocPVPass->clear(); Phi_commonAssocPVIdx->clear();
+    Phi_trackPVPass->clear(); Phi_vertexCriteriaPass->clear();
+    Phi_maxAbsDzPV->clear(); Phi_maxAbsDxyPV->clear();
+
+    Phi_K_1_Idx->clear(); Phi_K_1_px->clear(); Phi_K_1_py->clear(); Phi_K_1_pz->clear();
+    Phi_K_1_phi->clear(); Phi_K_1_eta->clear(); Phi_K_1_pt->clear();
+    Phi_K_1_fromPV->clear(); Phi_K_1_pvAssocQuality->clear();
+    Phi_K_1_hasAssocPV->clear(); Phi_K_1_passDzPV->clear();
+    Phi_K_1_passDxyPV->clear(); Phi_K_1_passTrackPV->clear();
+    Phi_K_1_vertexId->clear();
+    Phi_K_1_dzPV->clear(); Phi_K_1_dxyPV->clear();
+    Phi_K_1_dzAssocPV->clear(); Phi_K_1_dxyAssocPV->clear();
+    Phi_K_1_genMatchIdx->clear(); Phi_K_1_genMatchSource->clear(); Phi_K_1_genMatchChi2->clear();
+    Phi_K_2_Idx->clear(); Phi_K_2_px->clear(); Phi_K_2_py->clear(); Phi_K_2_pz->clear();
+    Phi_K_2_phi->clear(); Phi_K_2_eta->clear(); Phi_K_2_pt->clear();
+    Phi_K_2_fromPV->clear(); Phi_K_2_pvAssocQuality->clear();
+    Phi_K_2_hasAssocPV->clear(); Phi_K_2_passDzPV->clear();
+    Phi_K_2_passDxyPV->clear(); Phi_K_2_passTrackPV->clear();
+    Phi_K_2_vertexId->clear();
+    Phi_K_2_dzPV->clear(); Phi_K_2_dxyPV->clear();
+    Phi_K_2_dzAssocPV->clear(); Phi_K_2_dxyAssocPV->clear();
+    Phi_K_2_genMatchIdx->clear(); Phi_K_2_genMatchSource->clear(); Phi_K_2_genMatchChi2->clear();
+
+    // Upsilon branches
+    Ups_mu_1_Idx->clear(); Ups_mu_2_Idx->clear();
+    Ups_mass->clear(); Ups_massErr->clear(); Ups_massDiff->clear();
+    Ups_ctau->clear(); Ups_ctauErr->clear();
+    Ups_Chi2->clear(); Ups_ndof->clear(); Ups_VtxProb->clear();
+    Ups_px->clear(); Ups_py->clear(); Ups_pz->clear();
+    Ups_phi->clear(); Ups_eta->clear(); Ups_pt->clear();
+    Ups_pxErr->clear(); Ups_pyErr->clear(); Ups_pzErr->clear(); Ups_ptErr->clear();
+
+    // Clear intermediate storage
+    handleToNtupleIndex_.clear();
+    muPairCand_Onia1_.clear();
+    muPairCand_Onia2_.clear();
+    muQuad_Onia_.clear();
+    KPairCand_Meson_.clear();
+    nonMuonTrack_.clear();
+}
+
+/*****************************************************************************
+ * Utility: Momentum uncertainty extraction
+ *****************************************************************************/
+void MultiLepPAT::getMomentumErrors(const RefCountedKinematicParticle& arg_Part,
+                                     double& res_pxErr, double& res_pyErr,
+                                     double& res_pzErr, double& res_ptErr)
+{
+    try {
+        // The 7x7 covariance matrix has indices: (px=3, py=4, pz=5, m=6)
+        // but KinematicParametersError uses (x=0,y=1,z=2,px=3,py=4,pz=5,m=6)
+        auto errMatrix = arg_Part->currentState().kinematicParametersError().matrix();
+        res_pxErr = std::sqrt(std::max(errMatrix(3, 3), 0.0));
+        res_pyErr = std::sqrt(std::max(errMatrix(4, 4), 0.0));
+        res_pzErr = std::sqrt(std::max(errMatrix(5, 5), 0.0));
+        
+        // pt error via error propagation: pt = sqrt(px^2 + py^2)
+        double px = arg_Part->currentState().kinematicParameters().momentum().x();
+        double py = arg_Part->currentState().kinematicParameters().momentum().y();
+        double pt = std::sqrt(px*px + py*py);
+        if (pt > 0) {
+            double dpt_dpx = px / pt;
+            double dpt_dpy = py / pt;
+            res_ptErr = std::sqrt(
+                dpt_dpx * dpt_dpx * errMatrix(3, 3) +
+                dpt_dpy * dpt_dpy * errMatrix(4, 4) +
+                2.0 * dpt_dpx * dpt_dpy * errMatrix(3, 4));
+        } else {
+            res_ptErr = -9;
+        }
+    } catch (...) {
+        res_pxErr = -9; res_pyErr = -9; res_pzErr = -9; res_ptErr = -9;
+    }
+}
+
+/*****************************************************************************
+ * Utility methods (getDynamics, tracksToMuonPair, particlesToVtx, etc.)
+ * These are carried forward from the original with minimal changes.
+ *****************************************************************************/
+
+void MultiLepPAT::getDynamics(double arg_mass, double arg_px, double arg_py, double arg_pz,
+                              double& res_pt, double& res_eta, double& res_phi) {
     TLorentzVector myParticle;
     myParticle.SetXYZM(arg_px, arg_py, arg_pz, arg_mass);
     res_pt  = myParticle.Pt();
@@ -1303,665 +2216,623 @@ void MultiLepPAT::getDynamics(double  arg_mass, double  arg_px,  double  arg_py,
     res_phi = myParticle.Phi();
 }
 
-/******************************************************************************
- * [Name of function]  
- *      tracksToMuonPair
- * [Description]  
- *      Construct muons from tracks.
- *      Assuming muon mass and mass error as PDG 2023 values.
- *      Adds reconstructed muons to the arg_MuonResults.
- * [Parameters]
- *      vector<RefCountedKinematicParticle>&        arg_MuonResults
- *          - The vector to which reconstructed muons are added.
- *      KinematicParticleFactoryFromTransientTrack& arg_MuFactory
- *          - The class used to reconstruct muons.
- *      const MagneticField&                        arg_bField,
- *          - Magnetic field used in reconstruction.
- *      const TrackRef&                             arg_Trk1, arg_Trk2  
- *          - Tracks identified as muons.      
- * [Return value]
- *      (void)
- * [Note]
- *          
-******************************************************************************/
 void MultiLepPAT::getDynamics(const RefCountedKinematicParticle& arg_Part,
-                              double& res_pt,   double& res_eta, double& res_phi){
-    getDynamics(arg_Part->currentState().mass(), 
+                              double& res_pt, double& res_eta, double& res_phi) {
+    getDynamics(arg_Part->currentState().mass(),
                 arg_Part->currentState().kinematicParameters().momentum().x(),
                 arg_Part->currentState().kinematicParameters().momentum().y(),
                 arg_Part->currentState().kinematicParameters().momentum().z(),
                 res_pt, res_eta, res_phi);
 }
 
-/******************************************************************************
- * [Name of function]  
- *      tracksToMuonPair
- * [Description]  
- *      Construct muons from tracks.
- *      Assuming muon mass and mass error as PDG 2023 values.
- *      Adds reconstructed muons to the arg_MuonResults.
- * [Parameters]
- *      vector<RefCountedKinematicParticle>&        arg_MuonResults
- *          - The vector to which reconstructed muons are added.
- *      KinematicParticleFactoryFromTransientTrack& arg_MuFactory
- *          - The class used to reconstruct muons.
- *      const MagneticField&                        arg_bField,
- *          - Magnetic field used in reconstruction.
- *      const TrackRef&                             arg_Trk1, arg_Trk2  
- *          - Tracks identified as muons.      
- * [Return value]
- *      (void)
- * [Note]
- *          
-******************************************************************************/
-void MultiLepPAT::tracksToMuonPair(vector<RefCountedKinematicParticle>&        arg_MuonResults,
-                                   KinematicParticleFactoryFromTransientTrack& arg_MuFactory,
-                                   const MagneticField&                        arg_bField,
-                                   const TrackRef arg_Trk1,     const TrackRef arg_Trk2        ){
+void MultiLepPAT::tracksToMuonPair(
+    vector<RefCountedKinematicParticle>& arg_MuonResults,
+    KinematicParticleFactoryFromTransientTrack& arg_MuFactory,
+    const MagneticField& arg_bField,
+    const TrackRef arg_Trk1, const TrackRef arg_Trk2) {
     TransientTrack transTrk1(arg_Trk1, &(arg_bField));
     TransientTrack transTrk2(arg_Trk2, &(arg_bField));
-    // Parameters for muon
     ParticleMass muMass = myMuMass;
-    float muMassSigma   = myMuMassErr;
-    float chi2 = 0.;
-	float ndof = 0.;
+    float muMassSigma = myMuMassErr;
+    float chi2 = 0., ndof = 0.;
     arg_MuonResults.push_back(arg_MuFactory.particle(transTrk1, muMass, chi2, ndof, muMassSigma));
     arg_MuonResults.push_back(arg_MuFactory.particle(transTrk2, muMass, chi2, ndof, muMassSigma));
-    return ;
 }
 
-/******************************************************************************
- * [Name of function]  
- *      particlesToVtx
- * [Description]  
- *      Construct muons from tracks.
- *      Assuming muon mass and mass error as PDG 2023 values.
- *      Adds reconstructed muons to the arg_Muons.
- * [Parameters]
- *      vector<RefCountedKinematicParticle>&        arg_Muons
- *          - The vector to which reconstructed muons are added.
- * [Return value]
- *      (void)
- * [Note]
- *      A "silent" version of fitting particles to vertex. No error message
- *      will be printed in case of failed fitting.
-******************************************************************************/
+// --- particlesToVtx overloads ---
 
-bool MultiLepPAT::particlesToVtx(const vector<RefCountedKinematicParticle>&  arg_Muons){
+bool MultiLepPAT::particlesToVtx(const vector<RefCountedKinematicParticle>& arg_FromParticles) {
     KinematicParticleVertexFitter fitter;
     RefCountedKinematicTree vertexFitTree;
-    bool fitError = false;
-    try{
-        vertexFitTree = fitter.fit(arg_Muons);
-    }catch(...){
-        fitError = true;
-    }
-    if (fitError || !vertexFitTree->isValid()){
-        return false;
-    }
-    return true;
+    try { vertexFitTree = fitter.fit(arg_FromParticles); } catch (...) { return false; }
+    if (!vertexFitTree->isValid()) return false;
+    try {
+        return (vertexFitTree->currentDecayVertex()->chiSquared() >= 0.0);
+    } catch (...) { return false; }
 }
 
-/******************************************************************************
- * [Name of function]  
- *      particlesToVtx
- * [Description]  
- *      Construct muons from tracks.
- *      Assuming muon mass and mass error as PDG 2023 values.
- *      Adds reconstructed muons to the arg_Muons.
- * [Parameters]
- *      vector<RefCountedKinematicParticle>&        arg_Muons
- *          - The vector to which reconstructed muons are added.
- *      const string&                               arg_Message  
- *          - The message to be displayed in case of error.
- * [Return value]
- *      (void)
- * [Note]
- *      This definition uses an "implicit" VertexFitter and KinematicTree. 
-******************************************************************************/
-
-bool MultiLepPAT::particlesToVtx(const vector<RefCountedKinematicParticle>&  arg_Muons,
-                                 const string&                               arg_Message){
+bool MultiLepPAT::particlesToVtx(const vector<RefCountedKinematicParticle>& arg_FromParticles,
+                                  const string& arg_Message) {
     KinematicParticleVertexFitter fitter;
     RefCountedKinematicTree vertexFitTree;
-    bool fitError = false;
-    try{
-        vertexFitTree = fitter.fit(arg_Muons);
-    }catch(...){
-        fitError = true;
-        std::cout << "[Fit Error] " << arg_Message <<  std::endl;
-    }
-    if (fitError || !vertexFitTree->isValid()){
-        return false;
-    }
-    return true;
+    try { vertexFitTree = fitter.fit(arg_FromParticles); }
+    catch (...) { return false; }
+    if (!vertexFitTree->isValid()) return false;
+    try {
+        return (vertexFitTree->currentDecayVertex()->chiSquared() >= 0.0);
+    } catch (...) { return false; }
 }
 
-/******************************************************************************
- * [Name of function]  
- *      particlesToVtx
- * [Description]  
- *      Construct muons from tracks.
- *      Assuming muon mass and mass error as PDG 2023 values.
- *      Adds reconstructed muons to the arg_Muons.
- * [Parameters]
- *      vector<RefCountedKinematicParticle>&        arg_Muons
- *          - The vector to which reconstructed muons are added.
- *      const string&                               arg_Message  
- *          - The message to be displayed in case of error.
- *      RefCountedKinematicTree&                    arg_VertexFitTree
- *          - The KinematicTree to which the vertex fit is added.    
- * [Return value]
- *      (void)
- * [Note]
- *      This definition uses an "explicit" KinematicTree.
- *      The KinematicTree is passed as an argument and is modified after call.
-******************************************************************************/
-
-bool MultiLepPAT::particlesToVtx(RefCountedKinematicTree&                    arg_VertexFitTree,
-                                 const vector<RefCountedKinematicParticle>&  arg_Muons,
-                                 const string&                               arg_Message){
+bool MultiLepPAT::particlesToVtx(RefCountedKinematicTree& arg_VertexFitTree,
+                                  const vector<RefCountedKinematicParticle>& arg_FromParticles,
+                                  const string& arg_Message) {
     KinematicParticleVertexFitter fitter;
-    bool fitError = false;
-    try{
-        arg_VertexFitTree = fitter.fit(arg_Muons);
-    }catch(...){
-        fitError = true;
-        std::cout << "[Fit Error] " << arg_Message <<  std::endl;
-    }
-    if (fitError || !arg_VertexFitTree->isValid()){
-        return false;
-    }
-    return true;
+    try { arg_VertexFitTree = fitter.fit(arg_FromParticles); }
+    catch (...) { return false; }
+    if (!arg_VertexFitTree->isValid()) return false;
+    try {
+        return (arg_VertexFitTree->currentDecayVertex()->chiSquared() >= 0.0);
+    } catch (...) { return false; }
 }
 
-/******************************************************************************
- * [Name of function]  
- *      extractFitRes
- * [Description]
- *      Extract kinematic parameters and other results from a KinematicTree.
- *      Calls movePointerToTheTop() .
- * [Parameters]
- *      RefCountedKinematicTree&     arg_VtxTree
- *          - The KinematicTree constructed from fitting.
- *      RefCountedKinematicParticle& res_Part
- *          - The mother particle extracted from arg_VtxTree.
- *      RefCountedKinematicVertex&   res_Vtx
- *          - The primary vertex extracted from arg_VtxTree.
- *      KinematicParameters&         res_Param
- *          - The kinematic parameters of the mother particle.
- *      double&                      res_MassErr
- *          - The mass error of the mother particle.
- * [Return value]
- *      (bool)
- *          - True if the mass error squared is non-negative.
- * [Note]
- *      - Used when the resulting dynamics is important.
- *      - Requires the KinematicTree to be valid.
- *      - Requires "explicit" particle and vertex.
- *      - The mass error is set to -9 if the mass error squared is negative.
-******************************************************************************/
+bool MultiLepPAT::particlesToVtx(const vector<RefCountedKinematicParticle>& arg_FromParticles,
+                                  const double& arg_VtxProbCut) {
+    KinematicParticleVertexFitter fitter;
+    RefCountedKinematicTree vertexFitTree;
+    try { vertexFitTree = fitter.fit(arg_FromParticles); } catch (...) { return false; }
+    if (!vertexFitTree->isValid()) return false;
+    auto vtx = vertexFitTree->currentDecayVertex();
+    try {
+        if (vtx->chiSquared() < 0.0) return false;
+    } catch (...) { return false; }
+    double vtxprob = ChiSquaredProbability((double)(vtx->chiSquared()),
+                                           (double)(vtx->degreesOfFreedom()));
+    return (vtxprob >= arg_VtxProbCut);
+}
 
-bool MultiLepPAT::extractFitRes(RefCountedKinematicTree&     arg_VtxTree,
-                                RefCountedKinematicParticle& res_Part,
-                                RefCountedKinematicVertex&   res_Vtx,
-                                KinematicParameters&         res_Param,
-                                double&                      res_MassErr){
+bool MultiLepPAT::particlesToVtx(const vector<RefCountedKinematicParticle>& arg_FromParticles,
+                                  const string& arg_Message,
+                                  const double& arg_VtxProbCut) {
+    KinematicParticleVertexFitter fitter;
+    RefCountedKinematicTree vertexFitTree;
+    try { vertexFitTree = fitter.fit(arg_FromParticles); } catch (...) { return false; }
+    if (!vertexFitTree->isValid()) return false;
+    auto vtx = vertexFitTree->currentDecayVertex();
+    try {
+        if (vtx->chiSquared() < 0.0) return false;
+    } catch (...) { return false; }
+    double vtxprob = ChiSquaredProbability((double)(vtx->chiSquared()),
+                                           (double)(vtx->degreesOfFreedom()));
+    return (vtxprob >= arg_VtxProbCut);
+}
+
+bool MultiLepPAT::particlesToVtx(RefCountedKinematicTree& arg_VertexFitTree,
+                                  const vector<RefCountedKinematicParticle>& arg_FromParticles,
+                                  const string& arg_Message,
+                                  const double& arg_VtxProbCut) {
+    KinematicParticleVertexFitter fitter;
+    try { arg_VertexFitTree = fitter.fit(arg_FromParticles); } catch (...) { return false; }
+    if (!arg_VertexFitTree->isValid()) return false;
+    auto vtx = arg_VertexFitTree->currentDecayVertex();
+    try {
+        if (vtx->chiSquared() < 0.0) return false;
+    } catch (...) { return false; }
+    double vtxprob = ChiSquaredProbability((double)(vtx->chiSquared()),
+                                           (double)(vtx->degreesOfFreedom()));
+    return (vtxprob >= arg_VtxProbCut);
+}
+
+// --- extractFitRes overloads ---
+
+bool MultiLepPAT::extractFitRes(RefCountedKinematicTree& arg_VtxTree,
+                                 RefCountedKinematicParticle& res_Part,
+                                 RefCountedKinematicVertex& res_Vtx,
+                                 KinematicParameters& res_Param,
+                                 double& res_MassErr) {
     double tmp_MassErr2 = 0.0;
     arg_VtxTree->movePointerToTheTop();
-    // Extract particle and vertex.
-    res_Part  = arg_VtxTree->currentParticle();
-    res_Vtx   = arg_VtxTree->currentDecayVertex();
-    // Obtain mass error squared and other parameters for the vertex.
-    res_Param    = res_Part->currentState().kinematicParameters();
+    res_Part = arg_VtxTree->currentParticle();
+    res_Vtx = arg_VtxTree->currentDecayVertex();
+    res_Param = res_Part->currentState().kinematicParameters();
     tmp_MassErr2 = res_Part->currentState().kinematicParametersError().matrix()(6, 6);
-    // Judge if the fit have been a good fit.
-    if(tmp_MassErr2 < 0.0){
-        res_MassErr = -9;
-    }
-    else{
-        res_MassErr = std::sqrt(tmp_MassErr2);
-    }
+    res_MassErr = (tmp_MassErr2 < 0.0) ? -9 : std::sqrt(tmp_MassErr2);
     return (res_MassErr >= 0.0);
 }
 
-/******************************************************************************
- * [Name of function]  
- *      extractFitRes
- * [Description]
- *      Extract kinematic parameters and other results from a KinematicTree.
- *      Calls movePointerToTheTop() .
- * [Parameters]
- *      RefCountedKinematicTree&     arg_VtxTree
- *          - The KinematicTree constructed from fitting.
- *      RefCountedKinematicParticle& res_Part
- *          - The mother particle extracted from arg_VtxTree.
- *      RefCountedKinematicVertex&   res_Vtx
- *          - The primary vertex extracted from arg_VtxTree.
- *      double&                      res_MassErr
- *          - The mass error of the mother particle.
- * [Return value]
- *      (bool)
- *          - True if the mass error squared is non-negative.
- * [Note]
- *      - Used when the resulting dynamics is important.
- *      - Requires the KinematicTree to be valid.
- *      - Requires "explicit" particle and vertex.
- *      - The mass error is set to -9 if the mass error squared is negative.
-******************************************************************************/
-
-bool MultiLepPAT::extractFitRes(RefCountedKinematicTree&     arg_VtxTree,
-                                RefCountedKinematicParticle& res_Part,
-                                RefCountedKinematicVertex&   res_Vtx,
-                                double&                      res_MassErr){
+bool MultiLepPAT::extractFitRes(RefCountedKinematicTree& arg_VtxTree,
+                                 RefCountedKinematicParticle& res_Part,
+                                 RefCountedKinematicVertex& res_Vtx,
+                                 double& res_MassErr) {
     double tmp_MassErr2 = 0.0;
     arg_VtxTree->movePointerToTheTop();
-    // Extract particle and vertex.
-    res_Part  = arg_VtxTree->currentParticle();
-    res_Vtx   = arg_VtxTree->currentDecayVertex();
-    // Obtain mass error squared and other parameters for the vertex.
-    tmp_MassErr2 = res_Part->currentState().kinematicParametersError().matrix()(6, 6);
-    // Judge if the fit have been a good fit.
-    if(tmp_MassErr2 < 0.0){
-        res_MassErr = -9;
+    try {
+        res_Part = arg_VtxTree->currentParticle();
+        res_Vtx = arg_VtxTree->currentDecayVertex();
+        tmp_MassErr2 = res_Part->currentState().kinematicParametersError().matrix()(6, 6);
+    } catch (...) {
+        tmp_MassErr2 = -9;
     }
-    else{
-        res_MassErr = std::sqrt(tmp_MassErr2);
-    }
+    res_MassErr = (tmp_MassErr2 < 0.0) ? -9 : std::sqrt(tmp_MassErr2);
     return (res_MassErr >= 0.0);
 }
 
-/******************************************************************************
- * [Name of function]  
- *      extractFitRes
- * [Description]
- *      Extract kinematic parameters and other results from a KinematicTree.
- *      Calls movePointerToTheTop() .
- * [Parameters]
- *      RefCountedKinematicTree&     arg_VtxTree
- *          - The KinematicTree constructed from fitting.
- *      RefCountedKinematicVertex&   res_Vtx
- *          - The primary vertex extracted from arg_VtxTree.
- *      double&                      res_VtxProb
- *          - The vertex probability deduced from res_Vtx parameters.
- * [Return value]
- *      (bool, always true)
- * [Note]
- *      - Used when only the vertex probability is important.
- *      - Requires the KinematicTree to be valid.
- *      - Requires "explicit" vertex.
-******************************************************************************/
-
-bool MultiLepPAT::extractFitRes(RefCountedKinematicTree&     arg_VtxTree,
-                                RefCountedKinematicVertex&   res_Vtx,
-                                double&                      res_VtxProb){
-    arg_VtxTree->movePointerToTheTop();
-    // Extract particle and vertex.
-    res_Vtx   = arg_VtxTree->currentDecayVertex();
-    // Obtain mass error squared and other parameters for the vertex.
-    res_VtxProb = ChiSquaredProbability((double)(res_Vtx->chiSquared()), 
-                                        (double)(res_Vtx->degreesOfFreedom()));
-    return true;
+bool MultiLepPAT::extractFitRes(RefCountedKinematicTree& arg_VtxTree,
+                                 RefCountedKinematicVertex& res_Vtx,
+                                 double& res_VtxProb) {
+    try {
+        arg_VtxTree->movePointerToTheTop();
+        res_Vtx = arg_VtxTree->currentDecayVertex();
+        res_VtxProb = ChiSquaredProbability((double)(res_Vtx->chiSquared()),
+                                             (double)(res_Vtx->degreesOfFreedom()));
+    } catch (...) {
+        res_VtxProb = -9.0;
+        return false;
+    }
+    return (res_VtxProb >= 0.0);
 }
 
-/******************************************************************************
- * [Name of function]  
- *      isOverlapPair
- * [Description]
- *      Check if two muon pairs overlap from the muon indices.
- * [Parameters]
- *      const muList_t& arg_MuonPair1, arg_MuonPair2
- *          - The muon pairs to be compared.
- * [Return value]
- *      (bool)
- *          - True if the two muon pairs do overlap.
- * [Note]
- *      - Uses muList_t defined in the header.
-******************************************************************************/
-
-bool MultiLepPAT::isOverlapPair(const muList_t& arg_MuonPair1, 
-                                const muList_t& arg_MuonPair2 ){
-    return (arg_MuonPair1.second[0] == arg_MuonPair2.second[0] || 
-            arg_MuonPair1.second[0] == arg_MuonPair2.second[1] || 
-            arg_MuonPair1.second[1] == arg_MuonPair2.second[0] || 
-            arg_MuonPair1.second[1] == arg_MuonPair2.second[1]   );
+bool MultiLepPAT::isOverlapPair(const muList_t& arg_MuonPair1,
+                                 const muList_t& arg_MuonPair2) {
+    return (arg_MuonPair1.second[0] == arg_MuonPair2.second[0] ||
+            arg_MuonPair1.second[0] == arg_MuonPair2.second[1] ||
+            arg_MuonPair1.second[1] == arg_MuonPair2.second[0] ||
+            arg_MuonPair1.second[1] == arg_MuonPair2.second[1]);
 }
 
-/******************************************************************************
- * [Name of function]  
- *      fitResEval
- * [Description]
- *      Evaluate a fitting result from the mass and mass error.
- * [Parameters]
- *      double arg_mass_Jpsi_1, arg_mass_Jpsi_2, arg_mass_Ups
- *          - The mass of the particles.
- *      double arg_massErr_Jpsi_1, arg_massErr_Jpsi_2, arg_massErr_Ups
- *          - The mass error of the particles.
- * [Return value]
- *      (double)
- *          - Evaluation result.
- * [Note]
- *      To be used in resolving "multi-candidate" events.
-******************************************************************************/
-
-double MultiLepPAT::fitResEval(double arg_massDiff_Jpsi_1, double arg_massErr_Jpsi_1,
-                               double arg_massDiff_Jpsi_2, double arg_massErr_Jpsi_2,
-                               double arg_massDiff_Ups,    double arg_massErr_Ups   ){
-    return arg_massDiff_Jpsi_1 * arg_massDiff_Jpsi_1 / (arg_massErr_Jpsi_1 * arg_massErr_Jpsi_1) +
-           arg_massDiff_Jpsi_2 * arg_massDiff_Jpsi_2 / (arg_massErr_Jpsi_2 * arg_massErr_Jpsi_2) +
-           arg_massDiff_Ups    * arg_massDiff_Ups    / (arg_massErr_Ups    * arg_massErr_Ups   ) ;
+double MultiLepPAT::fitResEval(double arg_massDiff_1, double arg_massErr_1,
+                                double arg_massDiff_2, double arg_massErr_2,
+                                double arg_massDiff_3, double arg_massErr_3) {
+    return arg_massDiff_1 * arg_massDiff_1 / (arg_massErr_1 * arg_massErr_1) +
+           arg_massDiff_2 * arg_massDiff_2 / (arg_massErr_2 * arg_massErr_2) +
+           arg_massDiff_3 * arg_massDiff_3 / (arg_massErr_3 * arg_massErr_3);
 }
 
-// ------------ method called once each job just before starting event loop  ------------
-void MultiLepPAT::beginRun(edm::Run const &iRun, edm::EventSetup const &iSetup)
-{
-	// bool changed = true;
-	// proccessName_="HLT";
-	// hltConfig_.init(iRun,iSetup,proccessName_,changed);
-}
-
-void MultiLepPAT::beginJob()
-{
-	edm::Service<TFileService> fs;
-
-	// estree_ = fs->make<TTree>("eventSummary", "General Event Summary");
-	X_One_Tree_ = fs->make<TTree>("X_data", "X(3872) Data");
-
-	X_One_Tree_->Branch("TrigRes", &trigRes);
-	X_One_Tree_->Branch("TrigNames", &trigNames);
-	X_One_Tree_->Branch("MatchTriggerNames", &MatchTriggerNames);
-	X_One_Tree_->Branch("L1TrigRes", &L1TT);
-
-	X_One_Tree_->Branch("evtNum", &evtNum, "evtNum/i");
-	X_One_Tree_->Branch("runNum", &runNum, "runNum/i");
-	X_One_Tree_->Branch("lumiNum", &lumiNum, "lumiNum/i");
-	X_One_Tree_->Branch("nGoodPrimVtx", &nGoodPrimVtx, "nGoodPrimVtx/i");
-
-	// inst. lumi is here
-	//X_One_Tree_->Branch("mybxlumicorr", &mybxlumicorr, "mybxlumicorr/f");
-	//X_One_Tree_->Branch("myrawbxlumi", &myrawbxlumi, "myrawbxlumi/f");
-
-	X_One_Tree_->Branch("priVtxX", &priVtxX, "priVtxX/f");
-	X_One_Tree_->Branch("priVtxY", &priVtxY, "priVtxY/f");
-	X_One_Tree_->Branch("priVtxZ", &priVtxZ, "priVtxZ/f");
-	X_One_Tree_->Branch("priVtxXE", &priVtxXE, "priVtxXE/f");
-	X_One_Tree_->Branch("priVtxYE", &priVtxYE, "priVtxYE/f");
-	X_One_Tree_->Branch("priVtxZE", &priVtxZE, "priVtxZE/f");
-	X_One_Tree_->Branch("priVtxChiNorm", &priVtxChiNorm, "priVtxChiNorm/f");
-	X_One_Tree_->Branch("priVtxChi", &priVtxChi, "priVtxChi/f");
-	X_One_Tree_->Branch("priVtxCL", &priVtxCL, "priVtxCL/f");
-
-	X_One_Tree_->Branch("PriVtxXCorrX", &PriVtxXCorrX);
-	X_One_Tree_->Branch("PriVtxXCorrY", &PriVtxXCorrY);
-	X_One_Tree_->Branch("PriVtxXCorrZ", &PriVtxXCorrZ);
-	X_One_Tree_->Branch("PriVtxXCorrEX", &PriVtxXCorrEX);
-	X_One_Tree_->Branch("PriVtxXCorrEY", &PriVtxXCorrEY);
-	X_One_Tree_->Branch("PriVtxXCorrEZ", &PriVtxXCorrEZ);
-	X_One_Tree_->Branch("PriVtxXCorrC2", &PriVtxXCorrC2);
-	X_One_Tree_->Branch("PriVtxXCorrCL", &PriVtxXCorrCL);
-
-	X_One_Tree_->Branch("nMu", &nMu, "nMu/i");
-	X_One_Tree_->Branch("muPx", &muPx);
-	X_One_Tree_->Branch("muPy", &muPy);
-	X_One_Tree_->Branch("muPz", &muPz);
-	X_One_Tree_->Branch("muD0", &muD0);
-	X_One_Tree_->Branch("muD0E", &muD0E);
-	X_One_Tree_->Branch("muDz", &muDz);
-	X_One_Tree_->Branch("muChi2", &muChi2);
-	X_One_Tree_->Branch("muGlChi2", &muGlChi2);
-	X_One_Tree_->Branch("mufHits", &mufHits);
-	X_One_Tree_->Branch("muFirstBarrel", &muFirstBarrel);
-	X_One_Tree_->Branch("muFirstEndCap", &muFirstEndCap);
-	X_One_Tree_->Branch("muDzVtx", &muDzVtx);
-	X_One_Tree_->Branch("muDxyVtx", &muDxyVtx);
-	X_One_Tree_->Branch("muNDF", &muNDF);
-	X_One_Tree_->Branch("muGlNDF", &muGlNDF);
-	X_One_Tree_->Branch("muPhits", &muPhits);
-	X_One_Tree_->Branch("muShits", &muShits);
-	X_One_Tree_->Branch("muGlMuHits", &muGlMuHits);
-	X_One_Tree_->Branch("muType", &muType);
-	X_One_Tree_->Branch("muQual", &muQual);
-	X_One_Tree_->Branch("muTrack", &muTrack);
-	X_One_Tree_->Branch("muCharge", &muCharge);
-	X_One_Tree_->Branch("muIsoratio", &muIsoratio);
-	X_One_Tree_->Branch("munMatchedSeg", &munMatchedSeg);
-	X_One_Tree_->Branch("muIsGoodSoftMuonNewIlseMod", &muIsGoodSoftMuonNewIlseMod);
-	X_One_Tree_->Branch("muIsGoodSoftMuonNewIlse", &muIsGoodSoftMuonNewIlse);
-	X_One_Tree_->Branch("muIsGoodLooseMuonNew", &muIsGoodLooseMuonNew);
-	X_One_Tree_->Branch("muIsGoodLooseMuon", &muIsGoodLooseMuon);
-	X_One_Tree_->Branch("muIsGoodTightMuon", &muIsGoodTightMuon);
-
-	X_One_Tree_->Branch("muIsPatLooseMuon", &muIsPatLooseMuon);
-	X_One_Tree_->Branch("muIsPatTightMuon", &muIsPatTightMuon);
-	X_One_Tree_->Branch("muIsPatSoftMuon", &muIsPatSoftMuon);
-	X_One_Tree_->Branch("muIsPatMediumMuon", &muIsPatMediumMuon);
-
-	X_One_Tree_->Branch("muIsJpsiTrigMatch", &muIsJpsiTrigMatch);
-	X_One_Tree_->Branch("muIsUpsTrigMatch", &muIsUpsTrigMatch);
-	X_One_Tree_->Branch("muMVAMuonID", &muMVAMuonID);
-	X_One_Tree_->Branch("musegmentCompatibility", &musegmentCompatibility);
-
-	X_One_Tree_->Branch("mupulldXdZ_pos_noArb", &mupulldXdZ_pos_noArb);
-	X_One_Tree_->Branch("mupulldYdZ_pos_noArb", &mupulldYdZ_pos_noArb);
-	X_One_Tree_->Branch("mupulldXdZ_pos_ArbDef", &mupulldXdZ_pos_ArbDef);
-	X_One_Tree_->Branch("mupulldYdZ_pos_ArbDef", &mupulldYdZ_pos_ArbDef);
-	X_One_Tree_->Branch("mupulldXdZ_pos_ArbST", &mupulldXdZ_pos_ArbST);
-	X_One_Tree_->Branch("mupulldYdZ_pos_ArbST", &mupulldYdZ_pos_ArbST);
-	X_One_Tree_->Branch("mupulldXdZ_pos_noArb_any", &mupulldXdZ_pos_noArb_any);
-	X_One_Tree_->Branch("mupulldYdZ_pos_noArb_any", &mupulldYdZ_pos_noArb_any);
-
-	X_One_Tree_->Branch("muUpsVrtxMatch", &muUpsVrtxMatch);
-	X_One_Tree_->Branch("muL3TriggerMatch", &muL3TriggerMatch);
-
-    X_One_Tree_->Branch("Jpsi_1_mass", &Jpsi_1_mass);
-    X_One_Tree_->Branch("Jpsi_1_massErr", &Jpsi_1_massErr);
-    X_One_Tree_->Branch("Jpsi_1_massDiff", &Jpsi_1_massDiff);
-    X_One_Tree_->Branch("Jpsi_1_ctau", &Jpsi_1_ctau);
-    X_One_Tree_->Branch("Jpsi_1_ctauErr", &Jpsi_1_ctauErr);
-    X_One_Tree_->Branch("Jpsi_1_Chi2", &Jpsi_1_Chi2);
-    X_One_Tree_->Branch("Jpsi_1_ndof", &Jpsi_1_ndof);
-    X_One_Tree_->Branch("Jpsi_1_VtxProb", &Jpsi_1_VtxProb);
-    X_One_Tree_->Branch("Jpsi_1_px", &Jpsi_1_px);
-    X_One_Tree_->Branch("Jpsi_1_py", &Jpsi_1_py);
-    X_One_Tree_->Branch("Jpsi_1_pz", &Jpsi_1_pz);
-    X_One_Tree_->Branch("Jpsi_1_phi", &Jpsi_1_phi);
-    X_One_Tree_->Branch("Jpsi_1_eta", &Jpsi_1_eta);
-    X_One_Tree_->Branch("Jpsi_1_pt", &Jpsi_1_pt);
-    X_One_Tree_->Branch("Jpsi_1_mu_1_Idx", &Jpsi_1_mu_1_Idx);
-    X_One_Tree_->Branch("Jpsi_1_mu_2_Idx", &Jpsi_1_mu_2_Idx);
-
-    X_One_Tree_->Branch("Jpsi_2_mass", &Jpsi_2_mass);
-    X_One_Tree_->Branch("Jpsi_2_massErr", &Jpsi_2_massErr);
-    X_One_Tree_->Branch("Jpsi_2_massDiff", &Jpsi_2_massDiff);
-    X_One_Tree_->Branch("Jpsi_2_ctau", &Jpsi_2_ctau);
-    X_One_Tree_->Branch("Jpsi_2_ctauErr", &Jpsi_2_ctauErr);
-    X_One_Tree_->Branch("Jpsi_2_Chi2", &Jpsi_2_Chi2);
-    X_One_Tree_->Branch("Jpsi_2_ndof", &Jpsi_2_ndof);
-    X_One_Tree_->Branch("Jpsi_2_VtxProb", &Jpsi_2_VtxProb);
-    X_One_Tree_->Branch("Jpsi_2_px", &Jpsi_2_px);
-    X_One_Tree_->Branch("Jpsi_2_py", &Jpsi_2_py);
-    X_One_Tree_->Branch("Jpsi_2_pz", &Jpsi_2_pz);
-    X_One_Tree_->Branch("Jpsi_2_phi", &Jpsi_2_phi);
-    X_One_Tree_->Branch("Jpsi_2_eta", &Jpsi_2_eta);
-    X_One_Tree_->Branch("Jpsi_2_pt", &Jpsi_2_pt);
-    X_One_Tree_->Branch("Jpsi_2_mu_1_Idx", &Jpsi_2_mu_1_Idx);
-    X_One_Tree_->Branch("Jpsi_2_mu_2_Idx", &Jpsi_2_mu_2_Idx);
-
-    X_One_Tree_->Branch("Ups_mass", &Ups_mass);
-    X_One_Tree_->Branch("Ups_massErr", &Ups_massErr);
-    X_One_Tree_->Branch("Ups_massDiff", &Ups_massDiff);
-    X_One_Tree_->Branch("Ups_Chi2", &Ups_Chi2);
-    X_One_Tree_->Branch("Ups_ndof", &Ups_ndof);
-    X_One_Tree_->Branch("Ups_VtxProb", &Ups_VtxProb);
-    X_One_Tree_->Branch("Ups_px", &Ups_px);
-    X_One_Tree_->Branch("Ups_py", &Ups_py);
-    X_One_Tree_->Branch("Ups_pz", &Ups_pz);
-    X_One_Tree_->Branch("Ups_phi", &Ups_phi);
-    X_One_Tree_->Branch("Ups_eta", &Ups_eta);
-    X_One_Tree_->Branch("Ups_pt", &Ups_pt);
-    X_One_Tree_->Branch("Ups_mu_1_Idx", &Ups_mu_1_Idx);
-    X_One_Tree_->Branch("Ups_mu_2_Idx", &Ups_mu_2_Idx);
-
-    X_One_Tree_->Branch("Pri_mass", &Pri_mass);
-    X_One_Tree_->Branch("Pri_massErr", &Pri_massErr);
-    X_One_Tree_->Branch("Pri_ctau", &Pri_ctau);
-    X_One_Tree_->Branch("Pri_ctauErr", &Pri_ctauErr);
-    X_One_Tree_->Branch("Pri_Chi2", &Pri_Chi2);
-    X_One_Tree_->Branch("Pri_ndof", &Pri_ndof);
-    X_One_Tree_->Branch("Pri_VtxProb", &Pri_VtxProb);
-    X_One_Tree_->Branch("Pri_px", &Pri_px);
-    X_One_Tree_->Branch("Pri_py", &Pri_py);
-    X_One_Tree_->Branch("Pri_pz", &Pri_pz);
-    X_One_Tree_->Branch("Pri_phi", &Pri_phi);
-    X_One_Tree_->Branch("Pri_eta", &Pri_eta);
-    X_One_Tree_->Branch("Pri_pt", &Pri_pt);
-
-
-
-	if (doMC)
-	{
-		X_One_Tree_->Branch("MC_X_px", &MC_X_px);
-		X_One_Tree_->Branch("MC_X_py", &MC_X_py);
-		X_One_Tree_->Branch("MC_X_pz", &MC_X_pz);
-		X_One_Tree_->Branch("MC_X_mass", &MC_X_mass);
-		X_One_Tree_->Branch("MC_X_chg", &MC_X_chg);
-		X_One_Tree_->Branch("MC_Dau_JpsipdgId", &MC_Dau_JpsipdgId);
-		X_One_Tree_->Branch("MC_Dau_Jpsipx", &MC_Dau_Jpsipx);
-		X_One_Tree_->Branch("MC_Dau_Jpsipy", &MC_Dau_Jpsipy);
-		X_One_Tree_->Branch("MC_Dau_Jpsipz", &MC_Dau_Jpsipz);
-		X_One_Tree_->Branch("MC_Dau_Jpsimass", &MC_Dau_Jpsimass);
-		X_One_Tree_->Branch("MC_Dau_psi2spdgId", &MC_Dau_psi2spdgId);
-		X_One_Tree_->Branch("MC_Dau_psi2spx", &MC_Dau_psi2spx);
-		X_One_Tree_->Branch("MC_Dau_psi2spy", &MC_Dau_psi2spy);
-		X_One_Tree_->Branch("MC_Dau_psi2spz", &MC_Dau_psi2spz);
-		X_One_Tree_->Branch("MC_Dau_psi2smass", &MC_Dau_psi2smass);
-		X_One_Tree_->Branch("MC_Granddau_mu1pdgId", &MC_Granddau_mu1pdgId);
-		X_One_Tree_->Branch("MC_Granddau_mu1px", &MC_Granddau_mu1px);
-		X_One_Tree_->Branch("MC_Granddau_mu1py", &MC_Granddau_mu1py);
-		X_One_Tree_->Branch("MC_Granddau_mu1pz", &MC_Granddau_mu1pz);
-		X_One_Tree_->Branch("MC_Granddau_mu2pdgId", &MC_Granddau_mu2pdgId);
-		X_One_Tree_->Branch("MC_Granddau_mu2px", &MC_Granddau_mu2px);
-		X_One_Tree_->Branch("MC_Granddau_mu2py", &MC_Granddau_mu2py);
-		X_One_Tree_->Branch("MC_Granddau_mu2pz", &MC_Granddau_mu2pz);
-		X_One_Tree_->Branch("MC_Granddau_JpsipdgId", &MC_Granddau_JpsipdgId);
-		X_One_Tree_->Branch("MC_Granddau_Jpsipx", &MC_Granddau_Jpsipx);
-		X_One_Tree_->Branch("MC_Granddau_Jpsipy", &MC_Granddau_Jpsipy);
-		X_One_Tree_->Branch("MC_Granddau_Jpsipz", &MC_Granddau_Jpsipz);
-		X_One_Tree_->Branch("MC_Granddau_Jpsimass", &MC_Granddau_Jpsimass);
-		X_One_Tree_->Branch("MC_Granddau_pi1pdgId", &MC_Granddau_pi1pdgId);
-		X_One_Tree_->Branch("MC_Granddau_pi1px", &MC_Granddau_pi1px);
-		X_One_Tree_->Branch("MC_Granddau_pi1py", &MC_Granddau_pi1py);
-		X_One_Tree_->Branch("MC_Granddau_pi1pz", &MC_Granddau_pi1pz);
-		X_One_Tree_->Branch("MC_Granddau_pi2pdgId", &MC_Granddau_pi2pdgId);
-		X_One_Tree_->Branch("MC_Granddau_pi2px", &MC_Granddau_pi2px);
-		X_One_Tree_->Branch("MC_Granddau_pi2py", &MC_Granddau_pi2py);
-		X_One_Tree_->Branch("MC_Granddau_pi2pz", &MC_Granddau_pi2pz);
-		X_One_Tree_->Branch("MC_Grandgranddau_mu3pdgId", &MC_Grandgranddau_mu3pdgId);
-		X_One_Tree_->Branch("MC_Grandgranddau_mu3px", &MC_Grandgranddau_mu3px);
-		X_One_Tree_->Branch("MC_Grandgranddau_mu3py", &MC_Grandgranddau_mu3py);
-		X_One_Tree_->Branch("MC_Grandgranddau_mu3pz", &MC_Grandgranddau_mu3pz);
-		X_One_Tree_->Branch("MC_Grandgranddau_mu4pdgId", &MC_Grandgranddau_mu4pdgId);
-		X_One_Tree_->Branch("MC_Grandgranddau_mu4px", &MC_Grandgranddau_mu4px);
-		X_One_Tree_->Branch("MC_Grandgranddau_mu4py", &MC_Grandgranddau_mu4py);
-		X_One_Tree_->Branch("MC_Grandgranddau_mu4pz", &MC_Grandgranddau_mu4pz);
-	} // if(doMC)
-} // begin Job
-
-// Moved some functions from the header file to the source file [Modified by Eric Wang, 20240705]
-
-// CTau calculation from fitted vertex. [Annotated by Eric Wang, 20240705]
-double MultiLepPAT::GetcTau(RefCountedKinematicVertex&   decayVrtx, 
-                            RefCountedKinematicParticle& kinePart, 
-                            Vertex&                             bs ){	
-    TVector3 vtx;
-    TVector3 pvtx;
-    vtx.SetXYZ((*decayVrtx).position().x(), (*decayVrtx).position().y(), 0);
-    pvtx.SetXYZ(bs.position().x(), bs.position().y(), 0);
-    VertexDistanceXY vdistXY;
+// --- CTau ---
+double MultiLepPAT::GetcTau(RefCountedKinematicVertex& decayVrtx,
+                              RefCountedKinematicParticle& kinePart,
+                              Vertex& bs) {
+    TVector3 vtx((*decayVrtx).position().x(), (*decayVrtx).position().y(), 0);
+    TVector3 pvtx(bs.position().x(), bs.position().y(), 0);
     TVector3 pperp(kinePart->currentState().globalMomentum().x(),
-    	           kinePart->currentState().globalMomentum().y(), 
-                   0                                              );
-
+                   kinePart->currentState().globalMomentum().y(), 0);
     TVector3 vdiff = vtx - pvtx;
-    double cosAlpha = vdiff.Dot(pperp) / (vdiff.Perp() * pperp.Perp());
-    Measurement1D distXY = vdistXY.distance(Vertex(*decayVrtx), Vertex(bs));
-    double ctauPV = distXY.value() * cosAlpha * kinePart->currentState().mass() / pperp.Perp();
-    return ctauPV;    
+    double LxyPV = vdiff.Dot(pperp) / pperp.Mag();
+    return LxyPV * kinePart->currentState().mass() / pperp.Perp();
 }
 
-// CTau error calculation from fitted vertex. [Annotated by Eric Wang, 20240705]
-double MultiLepPAT:: GetcTauErr( RefCountedKinematicVertex& decayVrtx, 
-                                 RefCountedKinematicParticle& kinePart, 
-                                 Vertex& bs                              ){       
+double MultiLepPAT::GetcTauErr(RefCountedKinematicVertex& decayVrtx,
+                                 RefCountedKinematicParticle& kinePart,
+                                 Vertex& bs) {
     TVector3 pperp(kinePart->currentState().globalMomentum().x(),
-	               kinePart->currentState().globalMomentum().y(), 
-                   0                                              );
-    AlgebraicVector vpperp(3);
-    vpperp[0] = pperp.x();
-    vpperp[1] = pperp.y();
-    vpperp[2] = 0.;
-
-    GlobalError v1e = (Vertex(*decayVrtx)).error();
-    GlobalError v2e = bs.error();
-    AlgebraicSymMatrix vXYe = asHepMatrix(v1e.matrix()) + asHepMatrix(v2e.matrix());
-    double ctauErrPV = sqrt(vXYe.similarity(vpperp)) * kinePart->currentState().mass() / (pperp.Perp2());
-
-    return ctauErrPV;    
+                   kinePart->currentState().globalMomentum().y(), 0);
+    try {
+        AlgebraicVector vpperp(3);
+        vpperp[0] = pperp.x(); vpperp[1] = pperp.y(); vpperp[2] = 0.;
+        GlobalError v1e = (*decayVrtx).error();
+        GlobalError v2e = bs.error();
+        AlgebraicSymMatrix vXYe = asHepMatrix(v1e.matrix()) + asHepMatrix(v2e.matrix());
+        return sqrt(vXYe.similarity(vpperp)) * kinePart->currentState().mass() / (pperp.Perp2());
+    } catch (...) {
+        return -99999;
+    }
 }
 
-// deltaR calculation from usual eta and phi [Annotated by Eric Wang, 20240705]
 double MultiLepPAT::deltaR(double eta1, double phi1, double eta2, double phi2) {
     double deta = eta1 - eta2;
     double dphi = phi1 - phi2;
-    while (dphi >   M_PI) dphi -= 2*M_PI;
-    while (dphi <= -M_PI) dphi += 2*M_PI;
-    return sqrt(deta*deta + dphi*dphi);
+    while (dphi > M_PI) dphi -= 2 * M_PI;
+    while (dphi <= -M_PI) dphi += 2 * M_PI;
+    return sqrt(deta * deta + dphi * dphi);
 }
 
-
-/******************************************************************************
- * [Name of function]  
- *      getAllTriggers
- * [Description]   
- *      Get all triggers from the trigger results and categorize them
- * [Parameters]
- *      HLTresult                       trigger results from EDM
- * [Return value]
- *      (void)
- * [Note]
- *      [Eric Wang, 20240705]
- *          
-******************************************************************************/
-void MultiLepPAT::getAllTriggers(const edm::Handle<edm::TriggerResults>&     HLTresult){
+void MultiLepPAT::printKinematics(const RefCountedKinematicParticle& particle,
+                                    const std::string& name) {
+    const auto& state = particle->currentState();
+    std::cout << name << " kinematics:" << std::endl;
+    std::cout << "  px=" << state.globalMomentum().x()
+              << " py=" << state.globalMomentum().y()
+              << " pz=" << state.globalMomentum().z()
+              << " pt=" << state.globalMomentum().perp()
+              << " eta=" << state.globalMomentum().eta()
+              << " phi=" << state.globalMomentum().phi() << std::endl;
 }
 
+/*****************************************************************************
+ * beginRun / beginJob / endJob
+ *****************************************************************************/
+void MultiLepPAT::beginJob()
+{
+    edm::Service<TFileService> fs;
+    X_One_Tree_ = fs->make<TTree>("X_data", "Quarkonia Reconstruction Data");
 
+    X_One_Tree_->Branch("TrigRes", &trigRes);
+    X_One_Tree_->Branch("TrigNames", &trigNames);
+    X_One_Tree_->Branch("MatchJpsiTriggerNames", &MatchJpsiTrigNames);
+    X_One_Tree_->Branch("MatchUpsTriggerNames", &MatchUpsTrigNames);
+    X_One_Tree_->Branch("L1TrigRes", &L1TT);
 
-/******************************************************************************
- * [Name of function]  
- *      muonMatchTrigType
- * [Description]   
- *      
- * [Parameters]
- *      HLTresult                       trigger results from EDM
- * [Return value]
- *      (void)
- * [Note]
- *      [Eric Wang, 20240705]
- *          
-******************************************************************************/
-bool MultiLepPAT::muonMatchTrigType(const edm::View<pat::Muon>::const_iterator& muIter,
-                                    const vector<string>& trigNames, 
-                                          trigType        type                          ){
-    return false;
+    X_One_Tree_->Branch("evtNum", &evtNum, "evtNum/i");
+    X_One_Tree_->Branch("runNum", &runNum, "runNum/i");
+    X_One_Tree_->Branch("lumiNum", &lumiNum, "lumiNum/i");
+    X_One_Tree_->Branch("nGoodPrimVtx", &nGoodPrimVtx, "nGoodPrimVtx/i");
+
+    X_One_Tree_->Branch("priVtxX", &priVtxX, "priVtxX/f");
+    X_One_Tree_->Branch("priVtxY", &priVtxY, "priVtxY/f");
+    X_One_Tree_->Branch("priVtxZ", &priVtxZ, "priVtxZ/f");
+    X_One_Tree_->Branch("priVtxXE", &priVtxXE, "priVtxXE/f");
+    X_One_Tree_->Branch("priVtxYE", &priVtxYE, "priVtxYE/f");
+    X_One_Tree_->Branch("priVtxZE", &priVtxZE, "priVtxZE/f");
+    X_One_Tree_->Branch("priVtxChiNorm", &priVtxChiNorm, "priVtxChiNorm/f");
+    X_One_Tree_->Branch("priVtxChi", &priVtxChi, "priVtxChi/f");
+    X_One_Tree_->Branch("priVtxCL", &priVtxCL, "priVtxCL/f");
+    X_One_Tree_->Branch("PriVtxXCorrX", &PriVtxXCorrX);
+    X_One_Tree_->Branch("PriVtxXCorrY", &PriVtxXCorrY);
+    X_One_Tree_->Branch("PriVtxXCorrZ", &PriVtxXCorrZ);
+    X_One_Tree_->Branch("PriVtxXCorrEX", &PriVtxXCorrEX);
+    X_One_Tree_->Branch("PriVtxXCorrEY", &PriVtxXCorrEY);
+    X_One_Tree_->Branch("PriVtxXCorrEZ", &PriVtxXCorrEZ);
+    X_One_Tree_->Branch("PriVtxXCorrC2", &PriVtxXCorrC2);
+    X_One_Tree_->Branch("PriVtxXCorrCL", &PriVtxXCorrCL);
+
+    // All primary vertices (not just selected)
+    X_One_Tree_->Branch("nRecVtx", &nRecVtx, "nRecVtx/i");
+    X_One_Tree_->Branch("RecVtx_x", &RecVtx_x);
+    X_One_Tree_->Branch("RecVtx_y", &RecVtx_y);
+    X_One_Tree_->Branch("RecVtx_z", &RecVtx_z);
+    X_One_Tree_->Branch("RecVtx_xErr", &RecVtx_xErr);
+    X_One_Tree_->Branch("RecVtx_yErr", &RecVtx_yErr);
+    X_One_Tree_->Branch("RecVtx_zErr", &RecVtx_zErr);
+    X_One_Tree_->Branch("RecVtx_chi2", &RecVtx_chi2);
+    X_One_Tree_->Branch("RecVtx_ndof", &RecVtx_ndof);
+    X_One_Tree_->Branch("RecVtx_vtxProb", &RecVtx_vtxProb);
+    X_One_Tree_->Branch("RecVtx_nTracks", &RecVtx_nTracks);
+
+    // Muon branches
+    X_One_Tree_->Branch("nMu", &nMu, "nMu/i");
+    X_One_Tree_->Branch("muPx", &muPx); X_One_Tree_->Branch("muPy", &muPy); X_One_Tree_->Branch("muPz", &muPz);
+    X_One_Tree_->Branch("muD0", &muD0); X_One_Tree_->Branch("muD0E", &muD0E); X_One_Tree_->Branch("muDz", &muDz);
+    X_One_Tree_->Branch("muChi2", &muChi2); X_One_Tree_->Branch("muGlChi2", &muGlChi2);
+    X_One_Tree_->Branch("mufHits", &mufHits);
+    X_One_Tree_->Branch("muFirstBarrel", &muFirstBarrel); X_One_Tree_->Branch("muFirstEndCap", &muFirstEndCap);
+    X_One_Tree_->Branch("muDzVtx", &muDzVtx); X_One_Tree_->Branch("muDxyVtx", &muDxyVtx);
+    X_One_Tree_->Branch("muNDF", &muNDF); X_One_Tree_->Branch("muGlNDF", &muGlNDF);
+    X_One_Tree_->Branch("muPhits", &muPhits); X_One_Tree_->Branch("muShits", &muShits);
+    X_One_Tree_->Branch("muGlMuHits", &muGlMuHits);
+    X_One_Tree_->Branch("muType", &muType); X_One_Tree_->Branch("muQual", &muQual);
+    X_One_Tree_->Branch("muTrack", &muTrack); X_One_Tree_->Branch("muCharge", &muCharge);
+    X_One_Tree_->Branch("muIsoratio", &muIsoratio);
+    X_One_Tree_->Branch("munMatchedSeg", &munMatchedSeg);
+    X_One_Tree_->Branch("muIsGoodSoftMuonNewIlseMod", &muIsGoodSoftMuonNewIlseMod);
+    X_One_Tree_->Branch("muIsGoodSoftMuonNewIlse", &muIsGoodSoftMuonNewIlse);
+    X_One_Tree_->Branch("muIsGoodLooseMuonNew", &muIsGoodLooseMuonNew);
+    X_One_Tree_->Branch("muIsGoodLooseMuon", &muIsGoodLooseMuon);
+    X_One_Tree_->Branch("muIsGoodTightMuon", &muIsGoodTightMuon);
+    X_One_Tree_->Branch("muIsGlobalMuon", &muIsGlobalMuon);
+    X_One_Tree_->Branch("muIsPatLooseMuon", &muIsPatLooseMuon);
+    X_One_Tree_->Branch("muIsPatTightMuon", &muIsPatTightMuon);
+    X_One_Tree_->Branch("muIsPatSoftMuon", &muIsPatSoftMuon);
+    X_One_Tree_->Branch("muIsPatMediumMuon", &muIsPatMediumMuon);
+    X_One_Tree_->Branch("muFromPV", &muFromPV);
+    X_One_Tree_->Branch("muPVAssocQuality", &muPVAssocQuality);
+
+    // Muon momentum errors
+    X_One_Tree_->Branch("muPxErr", &muPxErr);
+    X_One_Tree_->Branch("muPyErr", &muPyErr);
+    X_One_Tree_->Branch("muPzErr", &muPzErr);
+    X_One_Tree_->Branch("muPtErr", &muPtErr);
+
+    // Muon PV association (surplus from sourceCandidatePtr)
+    X_One_Tree_->Branch("muVertexId", &muVertexId);
+    X_One_Tree_->Branch("muDzAssocPV", &muDzAssocPV);
+    X_One_Tree_->Branch("muDxyAssocPV", &muDxyAssocPV);
+    X_One_Tree_->Branch("muFromPVAssocPV", &muFromPVAssocPV);
+    X_One_Tree_->Branch("muPdgId", &muPdgId);
+    X_One_Tree_->Branch("muPackedMatchIdx", &muPackedMatchIdx);
+    X_One_Tree_->Branch("muPackedMatchMethod", &muPackedMatchMethod);
+    X_One_Tree_->Branch("muPackedMatchVectorRelP", &muPackedMatchVectorRelP);
+    X_One_Tree_->Branch("muPackedMatchChi2", &muPackedMatchChi2);
+    X_One_Tree_->Branch("muPackedMatchDzPV", &muPackedMatchDzPV);
+    X_One_Tree_->Branch("muPackedMatchDzAssocPV", &muPackedMatchDzAssocPV);
+    X_One_Tree_->Branch("muGenMatchIdx", &muGenMatchIdx);
+    X_One_Tree_->Branch("muGenMatchSource", &muGenMatchSource);
+    X_One_Tree_->Branch("muGenMatchChi2", &muGenMatchChi2);
+
+    X_One_Tree_->Branch("muIsJpsiTrigMatch", &muIsJpsiTrigMatch);
+    X_One_Tree_->Branch("muIsUpsTrigMatch", &muIsUpsTrigMatch);
+    X_One_Tree_->Branch("muIsJpsiFilterMatch", &muIsJpsiFilterMatch);
+    X_One_Tree_->Branch("muIsUpsFilterMatch", &muIsUpsFilterMatch);
+    X_One_Tree_->Branch("muMVAMuonID", &muMVAMuonID);
+    X_One_Tree_->Branch("musegmentCompatibility", &musegmentCompatibility);
+    X_One_Tree_->Branch("mupulldXdZ_pos_noArb", &mupulldXdZ_pos_noArb);
+    X_One_Tree_->Branch("mupulldYdZ_pos_noArb", &mupulldYdZ_pos_noArb);
+    X_One_Tree_->Branch("mupulldXdZ_pos_ArbDef", &mupulldXdZ_pos_ArbDef);
+    X_One_Tree_->Branch("mupulldYdZ_pos_ArbDef", &mupulldYdZ_pos_ArbDef);
+    X_One_Tree_->Branch("mupulldXdZ_pos_ArbST", &mupulldXdZ_pos_ArbST);
+    X_One_Tree_->Branch("mupulldYdZ_pos_ArbST", &mupulldYdZ_pos_ArbST);
+    X_One_Tree_->Branch("mupulldXdZ_pos_noArb_any", &mupulldXdZ_pos_noArb_any);
+    X_One_Tree_->Branch("mupulldYdZ_pos_noArb_any", &mupulldYdZ_pos_noArb_any);
+
+    // Muon-track matching debug (only if muTrkMatchDebug_)
+    if (muTrkMatchDebug_) {
+        X_One_Tree_->Branch("muMatch_nCandidates", &muMatch_nCandidates);
+        X_One_Tree_->Branch("muMatch_bestRelDiff", &muMatch_bestRelDiff);
+        X_One_Tree_->Branch("muMatch_bestDz", &muMatch_bestDz);
+        X_One_Tree_->Branch("muMatch_methodUsed", &muMatch_methodUsed);
+    }
+
+    // Resonance branches (with momentum errors)
+    auto branchReso = [&](const std::string& prefix,
+                          vector<float>*& mass, vector<float>*& massErr, vector<float>*& massDiff,
+                          vector<float>*& ctau, vector<float>*& ctauErr,
+                          vector<float>*& Chi2, vector<float>*& ndof, vector<float>*& VtxProb,
+                          vector<float>*& px, vector<float>*& py, vector<float>*& pz,
+                          vector<float>*& phi, vector<float>*& eta, vector<float>*& pt,
+                          vector<float>*& pxErr, vector<float>*& pyErr, vector<float>*& pzErr,
+                          vector<float>*& ptErr) {
+        X_One_Tree_->Branch((prefix + "_mass").c_str(), &mass);
+        X_One_Tree_->Branch((prefix + "_massErr").c_str(), &massErr);
+        if (massDiff) X_One_Tree_->Branch((prefix + "_massDiff").c_str(), &massDiff);
+        X_One_Tree_->Branch((prefix + "_ctau").c_str(), &ctau);
+        X_One_Tree_->Branch((prefix + "_ctauErr").c_str(), &ctauErr);
+        X_One_Tree_->Branch((prefix + "_Chi2").c_str(), &Chi2);
+        X_One_Tree_->Branch((prefix + "_ndof").c_str(), &ndof);
+        X_One_Tree_->Branch((prefix + "_VtxProb").c_str(), &VtxProb);
+        X_One_Tree_->Branch((prefix + "_px").c_str(), &px);
+        X_One_Tree_->Branch((prefix + "_py").c_str(), &py);
+        X_One_Tree_->Branch((prefix + "_pz").c_str(), &pz);
+        X_One_Tree_->Branch((prefix + "_phi").c_str(), &phi);
+        X_One_Tree_->Branch((prefix + "_eta").c_str(), &eta);
+        X_One_Tree_->Branch((prefix + "_pt").c_str(), &pt);
+        X_One_Tree_->Branch((prefix + "_pxErr").c_str(), &pxErr);
+        X_One_Tree_->Branch((prefix + "_pyErr").c_str(), &pyErr);
+        X_One_Tree_->Branch((prefix + "_pzErr").c_str(), &pzErr);
+        X_One_Tree_->Branch((prefix + "_ptErr").c_str(), &ptErr);
+    };
+
+    // Pre-allocate massDiff vectors so the if(massDiff) check in branchReso passes.
+    // Without this, all *_massDiff pointers remain nullptr (set in the constructor)
+    // and clearEventData() would segfault on ->clear().
+    Jpsi_1_massDiff = new vector<float>();
+    Jpsi_2_massDiff = new vector<float>();
+    Phi_massDiff    = new vector<float>();
+    Ups_massDiff    = new vector<float>();
+
+    branchReso("Jpsi_1", Jpsi_1_mass, Jpsi_1_massErr, Jpsi_1_massDiff,
+               Jpsi_1_ctau, Jpsi_1_ctauErr, Jpsi_1_Chi2, Jpsi_1_ndof, Jpsi_1_VtxProb,
+               Jpsi_1_px, Jpsi_1_py, Jpsi_1_pz, Jpsi_1_phi, Jpsi_1_eta, Jpsi_1_pt,
+               Jpsi_1_pxErr, Jpsi_1_pyErr, Jpsi_1_pzErr, Jpsi_1_ptErr);
+    X_One_Tree_->Branch("Jpsi_1_mu_1_Idx", &Jpsi_1_mu_1_Idx);
+    X_One_Tree_->Branch("Jpsi_1_mu_2_Idx", &Jpsi_1_mu_2_Idx);
+
+    branchReso("Jpsi_2", Jpsi_2_mass, Jpsi_2_massErr, Jpsi_2_massDiff,
+               Jpsi_2_ctau, Jpsi_2_ctauErr, Jpsi_2_Chi2, Jpsi_2_ndof, Jpsi_2_VtxProb,
+               Jpsi_2_px, Jpsi_2_py, Jpsi_2_pz, Jpsi_2_phi, Jpsi_2_eta, Jpsi_2_pt,
+               Jpsi_2_pxErr, Jpsi_2_pyErr, Jpsi_2_pzErr, Jpsi_2_ptErr);
+    X_One_Tree_->Branch("Jpsi_2_mu_1_Idx", &Jpsi_2_mu_1_Idx);
+    X_One_Tree_->Branch("Jpsi_2_mu_2_Idx", &Jpsi_2_mu_2_Idx);
+
+    branchReso("Phi", Phi_mass, Phi_massErr, Phi_massDiff,
+               Phi_ctau, Phi_ctauErr, Phi_Chi2, Phi_ndof, Phi_VtxProb,
+               Phi_px, Phi_py, Phi_pz, Phi_phi, Phi_eta, Phi_pt,
+               Phi_pxErr, Phi_pyErr, Phi_pzErr, Phi_ptErr);
+    X_One_Tree_->Branch("Phi_fitPass", &Phi_fitPass);
+    X_One_Tree_->Branch("Phi_commonAssocPVPass", &Phi_commonAssocPVPass);
+    X_One_Tree_->Branch("Phi_commonAssocPVIdx", &Phi_commonAssocPVIdx);
+    X_One_Tree_->Branch("Phi_trackPVPass", &Phi_trackPVPass);
+    X_One_Tree_->Branch("Phi_vertexCriteriaPass", &Phi_vertexCriteriaPass);
+    X_One_Tree_->Branch("Phi_maxAbsDzPV", &Phi_maxAbsDzPV);
+    X_One_Tree_->Branch("Phi_maxAbsDxyPV", &Phi_maxAbsDxyPV);
+    X_One_Tree_->Branch("Phi_K_1_Idx", &Phi_K_1_Idx);
+    X_One_Tree_->Branch("Phi_K_2_Idx", &Phi_K_2_Idx);
+
+    vector<float>* nullDiff = nullptr;
+    branchReso("Pri", Pri_mass, Pri_massErr, nullDiff,
+               Pri_ctau, Pri_ctauErr, Pri_Chi2, Pri_ndof, Pri_VtxProb,
+               Pri_px, Pri_py, Pri_pz, Pri_phi, Pri_eta, Pri_pt,
+               Pri_pxErr, Pri_pyErr, Pri_pzErr, Pri_ptErr);
+    X_One_Tree_->Branch("Pri_fitValid", &Pri_fitValid);
+    X_One_Tree_->Branch("Pri_fitPass", &Pri_fitPass);
+    X_One_Tree_->Branch("Pri_assocPVPass", &Pri_assocPVPass);
+    X_One_Tree_->Branch("Pri_assocPVIdx", &Pri_assocPVIdx);
+    X_One_Tree_->Branch("Pri_trackPVPass", &Pri_trackPVPass);
+    X_One_Tree_->Branch("Pri_passAny", &Pri_passAny);
+    X_One_Tree_->Branch("Pri_maxAbsDzPV", &Pri_maxAbsDzPV);
+    X_One_Tree_->Branch("Pri_maxAbsDxyPV", &Pri_maxAbsDxyPV);
+
+    // Kaon branches
+    X_One_Tree_->Branch("Phi_K_1_px", &Phi_K_1_px); X_One_Tree_->Branch("Phi_K_1_py", &Phi_K_1_py);
+    X_One_Tree_->Branch("Phi_K_1_pz", &Phi_K_1_pz); X_One_Tree_->Branch("Phi_K_1_phi", &Phi_K_1_phi);
+    X_One_Tree_->Branch("Phi_K_1_eta", &Phi_K_1_eta); X_One_Tree_->Branch("Phi_K_1_pt", &Phi_K_1_pt);
+    X_One_Tree_->Branch("Phi_K_1_fromPV", &Phi_K_1_fromPV);
+    X_One_Tree_->Branch("Phi_K_1_pvAssocQuality", &Phi_K_1_pvAssocQuality);
+    X_One_Tree_->Branch("Phi_K_1_hasAssocPV", &Phi_K_1_hasAssocPV);
+    X_One_Tree_->Branch("Phi_K_1_passDzPV", &Phi_K_1_passDzPV);
+    X_One_Tree_->Branch("Phi_K_1_passDxyPV", &Phi_K_1_passDxyPV);
+    X_One_Tree_->Branch("Phi_K_1_passTrackPV", &Phi_K_1_passTrackPV);
+    X_One_Tree_->Branch("Phi_K_1_vertexId", &Phi_K_1_vertexId);
+    X_One_Tree_->Branch("Phi_K_1_dzPV", &Phi_K_1_dzPV);
+    X_One_Tree_->Branch("Phi_K_1_dxyPV", &Phi_K_1_dxyPV);
+    X_One_Tree_->Branch("Phi_K_1_dzAssocPV", &Phi_K_1_dzAssocPV);
+    X_One_Tree_->Branch("Phi_K_1_dxyAssocPV", &Phi_K_1_dxyAssocPV);
+    X_One_Tree_->Branch("Phi_K_1_genMatchIdx", &Phi_K_1_genMatchIdx);
+    X_One_Tree_->Branch("Phi_K_1_genMatchSource", &Phi_K_1_genMatchSource);
+    X_One_Tree_->Branch("Phi_K_1_genMatchChi2", &Phi_K_1_genMatchChi2);
+    X_One_Tree_->Branch("Phi_K_2_px", &Phi_K_2_px); X_One_Tree_->Branch("Phi_K_2_py", &Phi_K_2_py);
+    X_One_Tree_->Branch("Phi_K_2_pz", &Phi_K_2_pz); X_One_Tree_->Branch("Phi_K_2_phi", &Phi_K_2_phi);
+    X_One_Tree_->Branch("Phi_K_2_eta", &Phi_K_2_eta); X_One_Tree_->Branch("Phi_K_2_pt", &Phi_K_2_pt);
+    X_One_Tree_->Branch("Phi_K_2_fromPV", &Phi_K_2_fromPV);
+    X_One_Tree_->Branch("Phi_K_2_pvAssocQuality", &Phi_K_2_pvAssocQuality);
+    X_One_Tree_->Branch("Phi_K_2_hasAssocPV", &Phi_K_2_hasAssocPV);
+    X_One_Tree_->Branch("Phi_K_2_passDzPV", &Phi_K_2_passDzPV);
+    X_One_Tree_->Branch("Phi_K_2_passDxyPV", &Phi_K_2_passDxyPV);
+    X_One_Tree_->Branch("Phi_K_2_passTrackPV", &Phi_K_2_passTrackPV);
+    X_One_Tree_->Branch("Phi_K_2_vertexId", &Phi_K_2_vertexId);
+    X_One_Tree_->Branch("Phi_K_2_dzPV", &Phi_K_2_dzPV);
+    X_One_Tree_->Branch("Phi_K_2_dxyPV", &Phi_K_2_dxyPV);
+    X_One_Tree_->Branch("Phi_K_2_dzAssocPV", &Phi_K_2_dzAssocPV);
+    X_One_Tree_->Branch("Phi_K_2_dxyAssocPV", &Phi_K_2_dxyAssocPV);
+    X_One_Tree_->Branch("Phi_K_2_genMatchIdx", &Phi_K_2_genMatchIdx);
+    X_One_Tree_->Branch("Phi_K_2_genMatchSource", &Phi_K_2_genMatchSource);
+    X_One_Tree_->Branch("Phi_K_2_genMatchChi2", &Phi_K_2_genMatchChi2);
+
+    // Upsilon branches
+    branchReso("Ups", Ups_mass, Ups_massErr, Ups_massDiff,
+               Ups_ctau, Ups_ctauErr, Ups_Chi2, Ups_ndof, Ups_VtxProb,
+               Ups_px, Ups_py, Ups_pz, Ups_phi, Ups_eta, Ups_pt,
+               Ups_pxErr, Ups_pyErr, Ups_pzErr, Ups_ptErr);
+    X_One_Tree_->Branch("Ups_mu_1_Idx", &Ups_mu_1_Idx);
+    X_One_Tree_->Branch("Ups_mu_2_Idx", &Ups_mu_2_Idx);
+
+    // MC branches
+    if (doMC) {
+        // New flat gen-particle branches
+        X_One_Tree_->Branch("MC_GenPart_pdgId", &MC_GenPart_pdgId);
+        X_One_Tree_->Branch("MC_GenPart_status", &MC_GenPart_status);
+        X_One_Tree_->Branch("MC_GenPart_motherPdgId", &MC_GenPart_motherPdgId);
+        X_One_Tree_->Branch("MC_GenPart_motherGenIdx", &MC_GenPart_motherGenIdx);
+        X_One_Tree_->Branch("MC_GenPart_handleIndex", &MC_GenPart_handleIndex);
+        X_One_Tree_->Branch("MC_GenPart_px", &MC_GenPart_px);
+        X_One_Tree_->Branch("MC_GenPart_py", &MC_GenPart_py);
+        X_One_Tree_->Branch("MC_GenPart_pz", &MC_GenPart_pz);
+        X_One_Tree_->Branch("MC_GenPart_mass", &MC_GenPart_mass);
+        X_One_Tree_->Branch("MC_GenPart_pt", &MC_GenPart_pt);
+        X_One_Tree_->Branch("MC_GenPart_eta", &MC_GenPart_eta);
+        X_One_Tree_->Branch("MC_GenPart_phi", &MC_GenPart_phi);
+    }
 }
 
+MultiLepPAT::MuonTrackMatchResult
+MultiLepPAT::matchMuonToTrack(const pat::Muon& muon,
+                              const edm::Handle<edm::View<pat::PackedCandidate>>& packedHandle,
+                              const edm::Handle<VertexCollection>& recVtxs,
+                              const reco::Vertex& primaryV) const
+{
+    MuonTrackMatchResult result;
+    result.matched = false;
+    result.packedHandleIdx = -1;
+    result.trackPoolIdx = -1;
+    result.vertexId = -1;
+    result.fromPV = 0;
+    result.pvAssocQuality = 0;
+    result.pdgId = 0;
+    result.nCandidates = 0;
+    result.methodUsed = 0;
+    result.vectorRelP = -1.f;
+    result.chi2 = -1.f;
+    result.dzSelectedPV = -1.f;
+    result.dzAssocPV = -1.f;
+    result.dxyAssocPV = -1.f;
 
-// ------------ method called once each job just after ending the event loop  ------------
+    if (!packedHandle.isValid()) {
+        return result;
+    }
+
+    const reco::Track* muTrack = bestMuonTrackForGenMatch(muon);
+    const double muDzSelectedPV =
+        (muTrack != nullptr ? muTrack->dz(primaryV.position()) : std::numeric_limits<double>::infinity());
+    const double muDzError =
+        (muTrack != nullptr ? std::max(muTrack->dzError(), 1e-6) : std::numeric_limits<double>::infinity());
+
+    std::unordered_set<unsigned int> sourceCandidateKeys;
+    for (size_t srcIdx = 0; srcIdx < muon.numberOfSourceCandidatePtrs(); ++srcIdx) {
+        const auto sourcePtr = muon.sourceCandidatePtr(srcIdx);
+        if (!sourcePtr.isNonnull() || !sourcePtr.isAvailable()) {
+            continue;
+        }
+        if (sourcePtr.id() != packedHandle.id() || sourcePtr.key() >= packedHandle->size()) {
+            continue;
+        }
+        sourceCandidateKeys.insert(sourcePtr.key());
+    }
+
+    double bestScore = std::numeric_limits<double>::infinity();
+    for (size_t poolIdx = 0; poolIdx < nonMuonTrack_.size(); ++poolIdx) {
+        const auto candIt = nonMuonTrack_[poolIdx];
+        const auto& cand = *candIt;
+        if (cand.charge() != muon.charge()) {
+            continue;
+        }
+
+        const int handleIdx = static_cast<int>(std::distance(packedHandle->begin(), candIt));
+        ++result.nCandidates;
+
+        const double vectorRelP = muonPackedVectorRelP(muon, cand);
+        const double chi2 = (muTrack != nullptr ?
+            recoMuonCandidateChi2(muon, cand, *muTrack) :
+            std::numeric_limits<double>::infinity());
+        const double deltaDzSelectedPV =
+            (muTrack != nullptr ? std::abs(cand.dz(primaryV.position()) - muDzSelectedPV) :
+             std::numeric_limits<double>::infinity());
+
+        int vertexId = -1;
+        double deltaDzAssocPV = std::numeric_limits<double>::infinity();
+        if (muTrack != nullptr && recVtxs.isValid()) {
+            const auto vertexRef = cand.vertexRef();
+            if (vertexRef.isNonnull() && vertexRef.isAvailable() &&
+                vertexRef.key() < recVtxs->size()) {
+                vertexId = static_cast<int>(vertexRef.key());
+                const auto& assocPV = (*recVtxs)[vertexRef.key()];
+                const double muDzAssocPV = muTrack->dz(assocPV.position());
+                deltaDzAssocPV = std::abs(cand.dzAssociatedPV() - muDzAssocPV);
+            }
+        }
+
+        bool passes = false;
+        double score = std::numeric_limits<double>::infinity();
+        switch (muTrkMatchMode_) {
+            case MuTrkMatchMethod::SourceCandidatePtr:
+                passes = sourceCandidateKeys.count(handleIdx) > 0 &&
+                         std::isfinite(chi2) && chi2 < muonPackedMatchChi2Max_;
+                score = chi2;
+                break;
+            case MuTrkMatchMethod::Vector:
+                passes = std::isfinite(vectorRelP) && vectorRelP < muonPackedMatchVectorRelPMax_;
+                score = vectorRelP;
+                break;
+            case MuTrkMatchMethod::Chi2:
+                passes = std::isfinite(chi2) && chi2 < muonPackedMatchChi2Max_;
+                score = chi2;
+                break;
+            case MuTrkMatchMethod::DzAssoc:
+                if (std::isfinite(chi2) && std::isfinite(deltaDzAssocPV) && std::isfinite(muDzError)) {
+                    score = chi2 + std::pow(deltaDzAssocPV / muDzError, 2);
+                    passes = score < muonPackedMatchDzAssocChi2Max_;
+                }
+                break;
+            case MuTrkMatchMethod::DzPv:
+                if (std::isfinite(chi2) && std::isfinite(deltaDzSelectedPV) && std::isfinite(muDzError)) {
+                    score = chi2 + std::pow(deltaDzSelectedPV / muDzError, 2);
+                    passes = score < muonPackedMatchDzPvChi2Max_;
+                }
+                break;
+        }
+
+        if (!passes || score >= bestScore) {
+            continue;
+        }
+
+        bestScore = score;
+        result.matched = true;
+        result.packedHandleIdx = handleIdx;
+        result.trackPoolIdx = static_cast<int>(poolIdx);
+        result.vertexId = vertexId;
+        result.fromPV = cand.fromPV();
+        result.pvAssocQuality = cand.pvAssociationQuality();
+        result.pdgId = cand.pdgId();
+        result.methodUsed = static_cast<int>(muTrkMatchMode_);
+        result.vectorRelP = static_cast<float>(vectorRelP);
+        result.chi2 = std::isfinite(chi2) ? static_cast<float>(chi2) : -1.f;
+        result.dzSelectedPV = std::isfinite(deltaDzSelectedPV) ? static_cast<float>(deltaDzSelectedPV) : -1.f;
+        result.dzAssocPV = std::isfinite(deltaDzAssocPV) ? static_cast<float>(deltaDzAssocPV) : -1.f;
+    }
+
+    return result;
+}
+
 void MultiLepPAT::endJob()
 {
-	X_One_Tree_->GetDirectory()->cd();
-	X_One_Tree_->Write();
+    X_One_Tree_->GetDirectory()->cd();
+    X_One_Tree_->Write();
 }
 
 // define this as a plug-in

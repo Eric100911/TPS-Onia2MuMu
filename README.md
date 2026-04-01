@@ -1,82 +1,161 @@
-## General Info
+# TPS-Onia2MuMu: MultiLepPAT EDAnalyzer
 
-Measuring the cross section of prompt $J/\psi+J/\psi+\Upsilon$ prodution in pp collision on CMS.
+Reconstructs quarkonia+quarkonia+meson final states from CMS MINIAOD data.
 
-Aimed at providing measurement result for studying parton correlation in proton and background estimation for BSM searches.
+## Supported Analysis Modes
 
-## Development 
+| `AnalysisMode`    | Decay Chain                              | Daughters       |
+|-------------------|------------------------------------------|-----------------|
+| `JpsiJpsiPhi`     | J/ψ(→μμ) + J/ψ(→μμ) + φ(→KK)           | 4μ + 2K         |
+| `JpsiJpsiUps`     | J/ψ(→μμ) + J/ψ(→μμ) + Υ(→μμ)           | 6μ              |
+| `JpsiUpsPhi`      | J/ψ(→μμ) + Υ(→μμ)  + φ(→KK)            | 4μ + 2K         |
 
-Using CMSSW_13_0_2. Inherited most of the code from AliceQuen/Onia2MuMu. (cr. Qin Junkai at Dept. of Physics, Tsinghua University)
+## Configuration (ConfFile_cfg.py)
 
-### Contributors
-* Wang Chi (Eric100911), undergraduate at Zhili College, Tsinghua University.
-* Cheng Xing, undergraduate at Zhili College, Tsinghua University.
-* Shi Zhenpeng, undergraduate at Dept. of Physics, Tsinghua University.
+All selection cuts are externalized and can be changed **without recompilation**:
 
-Supervised under Prof. Hu Zhen at Dept. of Physics, Tsinghua University.
+### Runtime String Cuts (StringCutObjectSelector)
 
-## Overview
+```python
+MuonSelection  = cms.untracked.string("pt > 2.5 && abs(eta) < 2.4")
+TrackSelection = cms.untracked.string("pt > 2.0 && abs(eta) < 2.5 && numberOfHits > 4")
+```
 
-### Event Selection Procedure
+These accept any valid expression on `pat::Muon` or `pat::PackedCandidate` members.
 
-1. Match $\mu^+\mu^-$ pairs using vertex fitting. (Track geometry only.)
+### Mass Windows (GeV)
 
-2. Create $J/\psi$ and $\Upsilon$ candidates using $\mu^+\mu^-$ pairs. (Dynamics required. Mass window, pT selection and other restrictions required.)
+| Parameter     | Default | Description                     |
+|---------------|---------|---------------------------------|
+| `JpsiMassMin` | 1.0    | J/ψ dimuon mass lower bound     |
+| `JpsiMassMax` | 4.0    | J/ψ dimuon mass upper bound     |
+| `UpsMassMin`  | 8.0    | Υ dimuon mass lower bound       |
+| `UpsMassMax`  | 12.0   | Υ dimuon mass upper bound       |
+| `PhiMassMin`  | 0.8    | φ(→KK) mass lower bound         |
+| `PhiMassMax`  | 1.2    | φ(→KK) mass upper bound         |
 
-3. Matching $J/\psi$ and $\Upsilon$ candidates from one single vertex . (Track geometry only. May check $c\tau$ distribution.)
+### Primary Vertex Cuts
 
-### Efficiency
+| Parameter   | Default | Description                      |
+|-------------|---------|----------------------------------|
+| `PVNdofMin` | 5       | Minimum ndof for good PV         |
+| `PVMaxAbsZ` | 24.0    | Maximum |z| of PV (cm)           |
+| `PVMaxRho`  | 2.0     | Maximum transverse distance (cm) |
 
-### Systematics
+### Vertex Probability Cuts
 
-## Code Framework
+| Parameter             | Default | Description                          |
+|-----------------------|---------|--------------------------------------|
+| `OniaDecayVtxProbCut` | 0.001   | Minimum vertex prob for dimuon fits  |
+| `PriVtxProbCut`       | 0.0     | Minimum vertex prob for primary vtx  |
 
-### Event Selection Procedure
+## New Branches (vs. previous version)
 
-1. `void LoadMC()` Load MC results if `doMC == true`.
-2. Some other code for initialization
-3. Import trigger results and save for possible trigger matching.
-4. Harvest muons from tracks. Loop over muon pairs.
-5. For muon pair candidataes, apply a crude selection with "opposite-charge criterion" and mass window cut. ( For $J/\psi$, consider mass range $[1.0, 4.0]$. For $\Upsilon$, consider mass range $[8.0, 12.0]$. )
-6. Apply kinematic fitting for each pair to vertices. 
-7. Store valid muon pairs by category. ($J/\psi$ or $\Upsilon$)
-8. Use non-overlapping muon pairs to form $J/\psi$ and $\Upsilon$ candidates. (Careful not to directly store iterators! Use pointers instead.)
-9. Store the candidates and corresponding muon pairs.
+### Momentum Uncertainties
+For each resonance (`Jpsi_1`, `Jpsi_2`, `Phi`, `Pri`):
+- `*_pxErr`, `*_pyErr`, `*_pzErr`: Component errors from `KinematicParametersError`
+- `*_ptErr`: Propagated transverse momentum error
 
-### Efficiency
+### MC Gen-level (flat storage)
+- `MC_GenPart_pdgId`, `MC_GenPart_status`, `MC_GenPart_motherPdgId`
+- `MC_GenPart_px/py/pz/mass/pt/eta/phi`
 
-### Systematics
+Stores all relevant gen particles (μ=13, K=321, J/ψ=443, Υ=553, φ=333) in flat vectors for flexible offline matching.
 
-## Notes For `git` Usage
+## Legacy Variables
 
-### Fundamentals: Pulling, Commiting and Pushing
+The following branches are retained for backward compatibility but may be deprecated:
 
-1. `git pull` Pull the latest changes from the remote repository.
-2. `git add .` Add all files to the staging area after making changes.
-3. `git commit` Commit the changes. A text editor will pop up for you to write the commit message. Alternatively, you can use `git commit -m "<message>"` to write the message directly.
-4. `git push` Push the changes to the default remote repository. (Usually `origin`.)
+- `muD0`, `muD0E`, `muDz` — Track impact parameters (now prefer vertex-corrected)
+- `muChi2`, `muGlChi2`, `muNDF`, `muGlNDF` — Old-style muon track quality
+- `mufHits`, `muFirstBarrel`, `muFirstEndCap` — Tracker hit pattern details
+- `muType`, `muQual`, `muTrack` — Encoded muon type/quality bitmasks
+- `muIsGoodLooseMuon`, `muIsGoodLooseMuonNew` — Deprecated soft muon selectors
+- `muMVAMuonID` — BDT-based muon ID (uses `TMVAClassification_BDT.class.C`)
+- `MC_X_*`, `MC_Dau_*`, `MC_Granddau_*`, `MC_Grandgranddau_*` — Legacy X(3872) decay-chain branches; superseded by `MC_GenPart_*`
 
-### Branching: Viewing, Creating, Switching and Merging
+## Fresh CMSSW Setup
 
-1. `git branch` List all branches. The current branch is marked with a `*`.
-2. `git branch -a` List all branches, including remote branches.
-3. `git branch -c <branch>` Create a new branch named `<branch>`. It will be created from the current branch.
-4. `git checkout <branch>` Switch to the branch named `<branch>`. Alternatively, you can use `git switch <branch>`.
-5. `git switch -c <branch>` A shortcut: create a new branch named `<branch>` and switch to it.
-6. `git branch -d <branch>` Delete the branch named `<branch>`. Use `-D` to force deletion.
-7. `git merge <branch>` Merge the branch named `<branch>` into the current branch.
+Create a new CMSSW release area, clone this package directly under `src/HeavyFlavorAnalysis/`, and build from there:
 
-### More Notes On Remote Repositories
+```bash
+source /cvmfs/cms.cern.ch/cmsset_default.sh
+scram project CMSSW CMSSW_15_0_15
+cd CMSSW_15_0_15/src
+eval "$(scramv1 runtime -sh)"
 
-1. `git remote` List all remote repositories.
-2. `git remote add <name> <url>` Add a new remote repository named `<name>` with URL `<url>`.
-3. `git remote remove <name>` Remove the remote repository named `<name>`. This only removes the remote repository from the local repository's configuration. It does not delete the remote repository itself.
-4. `git push <name>` Push the changes to the remote repository named `<name>`. This is useful when you have multiple remote repositories. In this project, we use `origin` and `Tsinghua`. The former is on GitHub, while the the latter is a mirror repository on Tsinghua's GitLab. They are kept in sync by the project maintainers.
-5. `git push --set-upstream <name> <branch>` Push the changes to the remote repository named `<name>` and set the upstream branch to `<branch>`. This is useful when you are pushing to a new branch on the remote repository.
+mkdir -p HeavyFlavorAnalysis
+git clone --recursive git@github.com:Eric100911/TPS-Onia2MuMu.git HeavyFlavorAnalysis/TPS-Onia2MuMu
 
-### Working Together
+scram b -j 4 HeavyFlavorAnalysis/TPS-Onia2MuMu
+```
 
-1. Always do `git pull` before starting off today's work!
-2. To do some development from someone else's work, consider using `git switch -c <branch>` to begin your own work on a separate branch.
-3. After finishing your work, do `git push --set-upstream <name> <branch>` to push your work to the remote repository `<name>`.
-4. To merge your work into the main branch, access the remote repository and create a pull request. The project maintainers will review your work and merge it into the main branch.
+If you cloned without `--recursive`, initialize the CRAB helper submodule afterwards:
+
+```bash
+cd $CMSSW_BASE/src/HeavyFlavorAnalysis/TPS-Onia2MuMu
+git submodule update --init --recursive
+```
+
+## Repository Structure
+
+The package is expected to live at `src/HeavyFlavorAnalysis/TPS-Onia2MuMu` inside the CMSSW release area:
+
+```text
+CMSSW_15_0_15/
+└── src/
+    └── HeavyFlavorAnalysis/
+        └── TPS-Onia2MuMu/
+            ├── interface/
+            │   ├── MultiLepPAT.h              # Main analyzer header
+            │   └── VertexReProducer.h         # Vertex re-fitting utility
+            ├── src/
+            │   ├── MultiLepPAT.cc             # Main analyzer implementation
+            │   └── VertexReProducer.cc        # Vertex re-fitting implementation
+            ├── data/
+            │   └── TMVAClassification_BDT.class.C
+            ├── python/
+            │   └── onia2MuMuPAT_cfi.py        # Onia2MuMuPAT producer config
+            ├── test/
+            │   ├── ConfFile_cfg.py            # Default config
+            │   ├── runMultiLepPAT_MCRun3_miniAOD_Run2022.py
+            │   └── crabData/                  # Git submodule -> CRAB-Tool
+            └── BuildFile.xml
+```
+
+## Building
+
+From the CMSSW release area:
+
+```bash
+cd $CMSSW_BASE/src
+scram b -j 4 HeavyFlavorAnalysis/TPS-Onia2MuMu
+```
+
+To rebuild the full release instead, use `scram b -j 4`.
+
+## Running
+
+From `$CMSSW_BASE/src`:
+
+```bash
+# Data
+cmsRun HeavyFlavorAnalysis/TPS-Onia2MuMu/test/ConfFile_cfg.py \
+    inputFiles=file:myData.root outputFile=output.root
+
+# MC
+cmsRun HeavyFlavorAnalysis/TPS-Onia2MuMu/test/runMultiLepPAT_MCRun3_miniAOD_Run2022.py \
+    inputFiles=file:myMC.root outputFile=mc_output.root
+
+# Switch analysis mode (e.g. J/psi+Upsilon+phi)
+cmsRun HeavyFlavorAnalysis/TPS-Onia2MuMu/test/ConfFile_cfg.py \
+    AnalysisMode=JpsiUpsPhi
+```
+
+## Additional Documentation
+
+The previous README contained longer reference material that is now preserved separately:
+
+- `doc/Physics_Overview_and_Method.md`: physics motivation, event-building strategy, phi reconstruction notes, and implementation walkthroughs preserved from the previous README
+- `doc/Datasets_and_Operations.md`: preserved dataset inventories, DAS usage notes, and run-era operational references
+- `doc/Historical_Project_Notes.md`: preserved dated project status, legacy branch notes, and contributor information
